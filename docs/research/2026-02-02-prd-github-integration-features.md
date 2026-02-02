@@ -7,7 +7,7 @@ topic: "PRD Creation Skills and GitHub Issues Integration"
 tags: [research, prd, github, skills, feature-planning]
 status: complete
 last_updated: 2026-02-02
-last_updated_note: "Added branch+PR workflow, resolved design decisions"
+last_updated_note: "All 11 design decisions finalized via CLARIFICATIONS.md"
 ---
 
 # Research: PRD Creation Skills and GitHub Issues Integration
@@ -275,25 +275,30 @@ GitHub Issue #42: "Add user authentication"
                     │
                     ▼ ralph gh import 42
 ┌─────────────────────────────────────────────────────────────┐
-│ prd.json: US-042 { githubIssue: 42, branch: null, pr: null }│
+│ prd.json: SND-042 { ticketId: 42, githubIssue: 42 }         │
 └─────────────────────────────────────────────────────────────┘
                     │
-                    ▼ ralph run starts US-042
+                    ▼ ralph run starts SND-042
 ┌─────────────────────────────────────────────────────────────┐
-│ 1. git checkout -b ralph/US-042-user-auth main              │
+│ 1. xgit b 42 "user auth" (or git checkout -b SND-042-...)   │
 │ 2. Do work, commit to branch                                │
-│ 3. git push -u origin ralph/US-042-user-auth                │
+│ 3. git push -u origin SND-042-user-auth                     │
 │ 4. gh pr create --body "Closes #42" (uses PR template)      │
-│ 5. Update prd.json: branch, pr fields                       │
-│ 6. Mark US-042 passes: true                                 │
+│ 5. Update prd.json: branch, pullRequest fields              │
+│ 6. Mark SND-042 passes: true                                │
 └─────────────────────────────────────────────────────────────┘
                     │
-                    ▼ Next task US-043
+                    ▼ Next task SND-043 (depends on SND-042)
 ┌─────────────────────────────────────────────────────────────┐
-│ IF US-043.dependsOn includes US-042:                        │
-│   git checkout -b ralph/US-043-next ralph/US-042-user-auth  │
-│ ELSE:                                                       │
-│   git checkout -b ralph/US-043-next main                    │
+│ 1. Branch from SND-042's branch (not main)                  │
+│ 2. PR targets SND-042's branch                              │
+│ 3. When SND-042 merged, GitHub retargets PR to main         │
+└─────────────────────────────────────────────────────────────┘
+                    │
+                    ▼ Conflict detected?
+┌─────────────────────────────────────────────────────────────┐
+│ 1. AI attempts resolution with context                      │
+│ 2. If impossible: mark blocked, skip to next independent    │
 └─────────────────────────────────────────────────────────────┘
                     │
                     ▼ PR merged by human
@@ -329,13 +334,15 @@ EOF
 ```javascript
 {
   userStories: [{
-    id: "US-042",
+    id: "SND-042",              // Uses configured ticketPrefix
+    ticketId: 42,               // Original ticket number (for xgit, GH issue link)
     title: "Add user authentication",
-    githubIssue: 42,      // Link to issue
-    dependsOn: [],        // Story IDs this depends on (for branch chaining)
-    branch: null,         // Filled when work starts: "ralph/US-042-user-auth"
-    pullRequest: null,    // Filled when PR created: 156
+    githubIssue: 42,            // Link to GitHub issue (if applicable)
+    dependsOn: [],              // Story IDs this depends on (for branch chaining)
+    branch: null,               // Filled when work starts: "SND-042-user-auth"
+    pullRequest: null,          // Filled when PR created: 156
     passes: false,
+    blocked: false,             // Set true if conflicts couldn't be resolved
     // ... other fields
   }]
 }
@@ -347,11 +354,14 @@ EOF
   agent: "claude",
   maxIterations: 30,
   createdAt: "...",
+  ticketPrefix: "SND",      // Auto-generated from project name, e.g., Sandy → SND
   git: {
-    provider: "github",   // "github" | "bitbucket" | "gitlab" | "none"
-    createPRs: true,      // Create PRs for each story
-    usePRTemplate: true,  // Use .github/PULL_REQUEST_TEMPLATE.md
-    branchPrefix: "ralph" // Branch naming: ralph/US-XXX-slug
+    provider: "github",     // "github" | "bitbucket" | "gitlab" | "none"
+    createPRs: true,        // Create PRs for each story
+    usePRTemplate: true,    // Use .github/PULL_REQUEST_TEMPLATE.md
+    waitForMerge: false,    // Continue to next story without waiting for PR merge
+    branchPrefix: "",       // Optional prefix (default: none)
+    useXgit: true           // Use xgit CLI if available
   }
 }
 ```
@@ -401,15 +411,19 @@ async function checkGitHubAuth() {
 
 1. **Skill Location**: `/prd` skill lives in ralphmode project (ralph-specific, outputs ralph's exact JSON schema)
 2. **GH Auth**: Check during init AND when kicked off. Config supports `git.provider: "none"` for non-GitHub projects
-3. **Issue Mapping**: 1:1 - one GitHub issue = one ralph story (simpler)
-4. **Project Boards**: Not supported - just issues (avoid complexity)
+3. **Issue Mapping**: 1:1 - one GitHub issue = one ralph story
+4. **Project Boards**: Not supported - just issues
 5. **Issue Closing**: Ralph creates PRs with "Closes #XX", humans merge, GitHub auto-closes issues
+6. **Dependent PRs**: Target the dependent branch (not main). GitHub auto-retargets to main when base branch deleted on merge. Maintains clean lineage.
+7. **PR Review Gate**: Configurable via `git.waitForMerge`, defaults to `false` (continue working)
+8. **Merge Conflicts**: AI attempts resolution with context. If impossible, mark story blocked and skip to next independent story.
+9. **Ticket Prefix**: Auto-generated from project name (e.g., "Sandy" → `SND-001`, "Jellybean" → `JLY-001`). Stored in config.
+10. **Branch Naming**: `<ticketID>-<kebab-slug>` (e.g., `SND-042-user-auth`). No prefix by default, configurable. Use `xgit` if available.
+11. **xgit Integration**: If `xgit` CLI available, use `xgit b <number> "<description>"` for branching. Fallback to simple git.
 
 ## Open Questions
 
-1. **Dependent PRs**: When US-043 branches from US-042's branch, should its PR target US-042's branch or main?
-2. **PR Review**: Should ralph wait for PR approval before starting next story, or continue?
-3. **Merge Conflicts**: How to handle when dependent branch has conflicts with main?
+None - all clarified.
 
 ---
 
