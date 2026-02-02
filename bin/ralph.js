@@ -212,7 +212,7 @@ async function initProject() {
     default: 30
   }]);
 
-  // Step 6: Check sandy (required for AFK Ralph)
+  // Step 6: Set up sandy (required for AFK Ralph)
   spinner.start('Checking sandy...');
   let sandyInstalled = false;
   try {
@@ -220,46 +220,24 @@ async function initProject() {
     sandyInstalled = true;
     spinner.succeed('Sandy installed');
   } catch {
-    spinner.warn('Sandy not installed');
+    spinner.fail('Sandy not installed');
     console.log(chalk.yellow('\n  Sandy is required for AFK Ralph mode.'));
     console.log(chalk.gray('  Install: https://github.com/anthropics/sandy\n'));
+    return;
   }
 
-  // Create sandy.json
+  // Run sandy init if no sandy.json
   const sandyJsonPath = join(process.cwd(), 'sandy.json');
   if (!existsSync(sandyJsonPath)) {
-    spinner.start('Creating sandy.json...');
-    const sandyConfig = {
-      allowedHosts: [
-        'api.anthropic.com',
-        'statsigapi.anthropic.com',
-        'sentry.io',
-        'api.openai.com',
-        'generativelanguage.googleapis.com',
-        'registry.npmjs.org',
-        'github.com',
-        'api.github.com'
-      ],
-      allowLocalhost: true,
-      resources: {
-        cpuLimit: '4',
-        memoryLimit: '8g'
-      },
-      persist: {
-        enabled: true,
-        paths: [
-          '/home/sandy/.claude',
-          '/home/sandy/.codex',
-          '/home/sandy/.gemini',
-          '/home/sandy/.npm',
-          '/home/sandy/.pnpm-store',
-          '/home/sandy/.cache'
-        ]
-      },
-      env: {}
-    };
-    writeFileSync(sandyJsonPath, JSON.stringify(sandyConfig, null, 2));
-    spinner.succeed('sandy.json created');
+    spinner.start('Running sandy init...');
+    try {
+      execSync('sandy init', { cwd: process.cwd(), stdio: 'pipe' });
+      spinner.succeed('sandy init complete');
+    } catch {
+      spinner.warn('sandy.json already exists');
+    }
+  } else {
+    console.log(chalk.gray('  sandy.json already exists'));
   }
 
   // Step 7: Create ralph directory and files
