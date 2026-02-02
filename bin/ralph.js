@@ -64,7 +64,7 @@ async function main() {
     showHelp();
   } else {
     // Default: run init if no ralph files, otherwise run
-    const hasRalphSetup = existsSync(join(process.cwd(), 'ralph', 'ralph.sh'));
+    const hasRalphSetup = existsSync(join(process.cwd(), '.ralph', 'ralph.sh'));
     if (hasRalphSetup) {
       await runRalph(args);
     } else {
@@ -102,7 +102,7 @@ async function initProject() {
   const spinner = ora();
 
   // Check if already initialized
-  if (existsSync(join(process.cwd(), 'ralph'))) {
+  if (existsSync(join(process.cwd(), '.ralph'))) {
     const { overwrite } = await inquirer.prompt([{
       type: 'confirm',
       name: 'overwrite',
@@ -257,7 +257,7 @@ async function initProject() {
   // Step 7: Create ralph directory and files
   spinner.start('Creating Ralph files...');
 
-  const ralphDir = join(process.cwd(), 'ralph');
+  const ralphDir = join(process.cwd(), '.ralph');
   mkdirSync(ralphDir, { recursive: true });
 
   // Create ralph.sh
@@ -304,11 +304,11 @@ Started: ${new Date().toISOString()}
   // Step 8: Offer to start sandbox
   console.log('\n' + chalk.green.bold('Ralph initialized successfully!'));
   console.log(chalk.gray('\nFiles created:'));
-  console.log(chalk.gray(`  ralph/ralph.sh      - Main loop script`));
-  console.log(chalk.gray(`  ralph/${promptFile}  - Prompt template`));
-  console.log(chalk.gray(`  ralph/progress.txt  - Progress tracking`));
-  console.log(chalk.gray(`  ralph/prd.json      - PRD tasks`));
-  console.log(chalk.gray(`  ralph/config.json   - Configuration`));
+  console.log(chalk.gray(`  .ralph/ralph.sh      - Main loop script`));
+  console.log(chalk.gray(`  .ralph/${promptFile}  - Prompt template`));
+  console.log(chalk.gray(`  .ralph/progress.txt  - Progress tracking`));
+  console.log(chalk.gray(`  .ralph/prd.json      - PRD tasks`));
+  console.log(chalk.gray(`  .ralph/config.json   - Configuration`));
 
   const { startNow } = await inquirer.prompt([{
     type: 'confirm',
@@ -328,7 +328,7 @@ Started: ${new Date().toISOString()}
 }
 
 async function runRalph(args) {
-  const ralphDir = join(process.cwd(), 'ralph');
+  const ralphDir = join(process.cwd(), '.ralph');
 
   if (!existsSync(ralphDir)) {
     console.log(chalk.red('Ralph not initialized. Run `ralph init` first.'));
@@ -384,7 +384,7 @@ async function runRalph(args) {
   // Start sandbox and run ralph
   console.log(chalk.cyan('\nLaunching sandbox...\n'));
 
-  const sandyProcess = spawn('sandy', ['run', `./ralph/ralph.sh ${iterations}`], {
+  const sandyProcess = spawn('sandy', ['run', `./.ralph/ralph.sh ${iterations}`], {
     cwd: process.cwd(),
     stdio: 'inherit',
     shell: true
@@ -401,7 +401,7 @@ async function runRalph(args) {
 }
 
 async function showStatus() {
-  const ralphDir = join(process.cwd(), 'ralph');
+  const ralphDir = join(process.cwd(), '.ralph');
 
   if (!existsSync(ralphDir)) {
     console.log(chalk.red('Ralph not initialized.'));
@@ -528,8 +528,8 @@ function generatePrompt(agent) {
 
 You are Ralph, an autonomous AI coding agent. Follow these steps precisely:
 
-1. **Read the PRD** at \`ralph/prd.json\`
-2. **Read progress.txt** at \`ralph/progress.txt\` - check Codebase Patterns section first
+1. **Read the PRD** at \`.ralph/prd.json\`
+2. **Read progress.txt** at \`.ralph/progress.txt\` - check Codebase Patterns section first
 3. **Check branch** - ensure you're on the correct branch from PRD \`branchName\`. Create from main if needed.
 4. **Pick ONE story** - the highest priority story where \`passes: false\`
 5. **Implement** that single user story completely
@@ -540,7 +540,7 @@ You are Ralph, an autonomous AI coding agent. Follow these steps precisely:
 
 ## Progress Report Format
 
-APPEND to ralph/progress.txt (never replace, always append):
+APPEND to .ralph/progress.txt (never replace, always append):
 
 \`\`\`
 ## [Date/Time] - [Story ID]
@@ -668,7 +668,7 @@ function getEmptyPRD() {
 }
 
 async function runCompoundReview() {
-  const ralphDir = join(process.cwd(), 'ralph');
+  const ralphDir = join(process.cwd(), '.ralph');
   const configPath = join(ralphDir, 'config.json');
 
   if (!existsSync(ralphDir)) {
@@ -690,7 +690,7 @@ async function runCompoundReview() {
 
 1. Look at the git log for recent commits in the last 24 hours
 2. Review what was implemented and any patterns discovered
-3. Update ralph/progress.txt with any new patterns in the "## Codebase Patterns" section
+3. Update .ralph/progress.txt with any new patterns in the "## Codebase Patterns" section
 4. If there are project-level CLAUDE.md or AGENTS.md files, update them with relevant learnings
 
 Focus on:
