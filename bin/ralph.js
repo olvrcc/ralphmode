@@ -212,7 +212,49 @@ async function initProject() {
     default: 30
   }]);
 
-  // Step 6: Create ralph directory and files
+  // Step 6: Set up sandy sandbox
+  const sandyJsonPath = join(process.cwd(), 'sandy.json');
+  if (!existsSync(sandyJsonPath)) {
+    spinner.start('Setting up sandy sandbox...');
+
+    // Create sandy.json with sensible defaults for AI agents
+    const sandyConfig = {
+      allowedHosts: [
+        'api.anthropic.com',
+        'statsigapi.anthropic.com',
+        'sentry.io',
+        'api.openai.com',
+        'generativelanguage.googleapis.com',
+        'registry.npmjs.org',
+        'github.com',
+        'api.github.com'
+      ],
+      allowLocalhost: true,
+      resources: {
+        cpuLimit: '4',
+        memoryLimit: '8g'
+      },
+      persist: {
+        enabled: true,
+        paths: [
+          '/home/sandy/.claude',
+          '/home/sandy/.codex',
+          '/home/sandy/.gemini',
+          '/home/sandy/.npm',
+          '/home/sandy/.pnpm-store',
+          '/home/sandy/.cache'
+        ]
+      },
+      env: {}
+    };
+
+    writeFileSync(sandyJsonPath, JSON.stringify(sandyConfig, null, 2));
+    spinner.succeed('Sandy sandbox configured');
+  } else {
+    console.log(chalk.gray('  sandy.json already exists, skipping'));
+  }
+
+  // Step 7: Create ralph directory and files
   spinner.start('Creating Ralph files...');
 
   const ralphDir = join(process.cwd(), 'ralph');
@@ -259,7 +301,7 @@ Started: ${new Date().toISOString()}
 
   spinner.succeed('Ralph files created');
 
-  // Step 7: Offer to start sandbox
+  // Step 8: Offer to start sandbox
   console.log('\n' + chalk.green.bold('Ralph initialized successfully!'));
   console.log(chalk.gray('\nFiles created:'));
   console.log(chalk.gray(`  ralph/ralph.sh      - Main loop script`));
