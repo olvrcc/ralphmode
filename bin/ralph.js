@@ -39,6 +39,14 @@ const AGENTS = {
   }
 };
 
+function generateTicketPrefix(projectName) {
+  // Extract consonants, uppercase, take first 3
+  const consonants = projectName.replace(/[aeiou]/gi, '').toUpperCase();
+  if (consonants.length >= 3) return consonants.slice(0, 3);
+  // Fallback: first 3 chars uppercase
+  return projectName.slice(0, 3).toUpperCase();
+}
+
 async function main() {
   console.log(chalk.yellow.bold(`
   ╦═╗╔═╗╦  ╔═╗╦ ╦  ╦ ╦╦╔═╗╔═╗╦ ╦╔╦╗
@@ -60,6 +68,17 @@ async function main() {
     await runCompoundReview();
   } else if (command === 'schedule') {
     await setupSchedule();
+  } else if (command === 'gh') {
+    const subcommand = args[1];
+    if (subcommand === 'check') {
+      await ghCheck();
+    } else if (subcommand === 'import') {
+      await ghImport(args[2]);
+    } else if (subcommand === 'sync') {
+      await ghSync();
+    } else {
+      console.log(chalk.yellow('Usage: ralph gh [check|import <number>|sync]'));
+    }
   } else if (command === 'help' || command === '--help' || command === '-h') {
     showHelp();
   } else {
@@ -83,6 +102,9 @@ ${chalk.bold('Commands:')}
   ${chalk.cyan('status')}            Show current PRD and progress status
   ${chalk.cyan('compound')}          Extract learnings from recent sessions
   ${chalk.cyan('schedule')}          Set up nightly automated runs (launchd)
+  ${chalk.cyan('gh check')}          Check GitHub CLI authentication
+  ${chalk.cyan('gh import')} <n>     Import GitHub issue as story
+  ${chalk.cyan('gh sync')}           Import all open GitHub issues
   ${chalk.cyan('help')}              Show this help message
 
 ${chalk.bold('Aliases:')}
@@ -218,6 +240,59 @@ async function initProject() {
     default: 30
   }]);
 
+  // Step 5b: Git provider configuration
+  const projectName = process.cwd().split('/').pop();
+  const suggestedPrefix = generateTicketPrefix(projectName);
+
+  let { gitProvider } = await inquirer.prompt([{
+    type: 'list',
+    name: 'gitProvider',
+    message: 'Git provider for PR integration:',
+    choices: [
+      { name: 'GitHub (recommended)', value: 'github' },
+      { name: 'None (skip PR workflow)', value: 'none' }
+    ]
+  }]);
+
+  let ticketPrefix = suggestedPrefix;
+  if (gitProvider !== 'none') {
+    const { customPrefix } = await inquirer.prompt([{
+      type: 'input',
+      name: 'customPrefix',
+      message: `Ticket prefix (suggested: ${suggestedPrefix}):`,
+      default: suggestedPrefix,
+      validate: (input) => /^[A-Z]{2,5}$/i.test(input) || 'Use 2-5 letters'
+    }]);
+    ticketPrefix = customPrefix.toUpperCase();
+  }
+
+  // Check GitHub CLI auth if using github provider
+  if (gitProvider === 'github') {
+    spinner.start('Checking GitHub CLI...');
+    const ghInstalled = checkGitHubCLI();
+    if (!ghInstalled) {
+      spinner.fail('GitHub CLI (gh) not found');
+      console.log(chalk.yellow('\n  Install: brew install gh'));
+      console.log(chalk.yellow('  Then: gh auth login\n'));
+      const { continueWithoutGH } = await inquirer.prompt([{
+        type: 'confirm',
+        name: 'continueWithoutGH',
+        message: 'Continue without GitHub integration?',
+        default: false
+      }]);
+      if (!continueWithoutGH) return;
+      gitProvider = 'none';
+    } else {
+      const ghAuthed = await checkGitHubAuth();
+      if (!ghAuthed) {
+        spinner.warn('GitHub CLI not authenticated');
+        console.log(chalk.yellow('\n  Run: gh auth login\n'));
+      } else {
+        spinner.succeed('GitHub CLI authenticated');
+      }
+    }
+  }
+
   // Step 6: Set up sandy (required for AFK Ralph)
   spinner.start('Checking sandy...');
   let sandyInstalled = false;
@@ -252,14 +327,31 @@ async function initProject() {
   const ralphDir = join(process.cwd(), '.ralph');
   mkdirSync(ralphDir, { recursive: true });
 
+  // Create config first (needed for prompt generation)
+  const config = {
+    agent,
+    maxIterations,
+    createdAt: new Date().toISOString(),
+    ticketPrefix,
+    git: {
+      provider: gitProvider,
+      createPRs: gitProvider === 'github',
+      usePRTemplate: true,
+      waitForMerge: false,
+      branchPrefix: '',
+      useXgit: checkXgitAvailable()
+    }
+  };
+  writeFileSync(join(ralphDir, 'config.json'), JSON.stringify(config, null, 2));
+
   // Create ralph.sh
   const ralphScript = generateRalphScript(agent, maxIterations);
   writeFileSync(join(ralphDir, 'ralph.sh'), ralphScript);
   chmodSync(join(ralphDir, 'ralph.sh'), '755');
 
-  // Create prompt file
+  // Create prompt file (pass config for git workflow instructions)
   const promptFile = agent === 'claude' ? 'CLAUDE.md' : 'prompt.md';
-  const promptContent = generatePrompt(agent);
+  const promptContent = generatePrompt(agent, config);
   writeFileSync(join(ralphDir, promptFile), promptContent);
 
   // Create progress.txt
@@ -277,19 +369,11 @@ Started: ${new Date().toISOString()}
 
   // Create prd.json
   if (prdContent) {
-    const prdJson = convertToPRDJson(prdContent);
+    const prdJson = convertToPRDJson(prdContent, ticketPrefix);
     writeFileSync(join(ralphDir, 'prd.json'), JSON.stringify(prdJson, null, 2));
   } else {
-    writeFileSync(join(ralphDir, 'prd.json'), JSON.stringify(getEmptyPRD(), null, 2));
+    writeFileSync(join(ralphDir, 'prd.json'), JSON.stringify(getEmptyPRD(ticketPrefix), null, 2));
   }
-
-  // Create config
-  const config = {
-    agent,
-    maxIterations,
-    createdAt: new Date().toISOString()
-  };
-  writeFileSync(join(ralphDir, 'config.json'), JSON.stringify(config, null, 2));
 
   spinner.succeed('Ralph files created');
 
@@ -404,11 +488,15 @@ async function showStatus() {
 
     if (prd.userStories && prd.userStories.length > 0) {
       prd.userStories.forEach((story, i) => {
-        const status = story.passes
-          ? chalk.green('✓')
-          : chalk.gray('○');
+        const status = story.blocked
+          ? chalk.red('⊘')
+          : story.passes
+            ? chalk.green('✓')
+            : chalk.gray('○');
         const priority = chalk.gray(`[P${story.priority || i + 1}]`);
-        console.log(`  ${status} ${priority} ${story.id}: ${story.title}`);
+        const branch = story.branch ? chalk.gray(` → ${story.branch}`) : '';
+        const pr = story.pullRequest ? chalk.cyan(` PR#${story.pullRequest}`) : '';
+        console.log(`  ${status} ${priority} ${story.id}: ${story.title}${branch}${pr}`);
       });
 
       const total = prd.userStories.length;
@@ -444,6 +532,274 @@ async function checkAgentAuth(agent) {
     return true;
   } catch {
     return false;
+  }
+}
+
+function checkGitHubCLI() {
+  try {
+    execSync('which gh', { stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function checkGitHubAuth() {
+  try {
+    execSync('gh auth status', { stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function checkXgitAvailable() {
+  try {
+    execSync('which xgit', { stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function createStoryBranch(story, config, baseBranch = 'main') {
+  const slug = story.title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 30);
+
+  const branchName = `${story.id}-${slug}`;
+
+  if (config.git?.useXgit) {
+    try {
+      // xgit b <number> "<description>"
+      execSync(`xgit b ${story.ticketId} "${story.title}"`, { stdio: 'pipe' });
+      return branchName; // xgit creates its own naming
+    } catch (err) {
+      console.log(chalk.yellow('xgit failed, falling back to git'));
+    }
+  }
+
+  // Fallback to git
+  try {
+    execSync(`git checkout ${baseBranch}`, { stdio: 'pipe' });
+    execSync(`git pull origin ${baseBranch}`, { stdio: 'pipe' });
+    execSync(`git checkout -b ${branchName}`, { stdio: 'pipe' });
+    return branchName;
+  } catch (err) {
+    throw new Error(`Failed to create branch: ${err.message}`);
+  }
+}
+
+async function createPullRequest(story, config) {
+  if (config.git?.provider !== 'github' || !config.git?.createPRs) {
+    return null;
+  }
+
+  const title = `${story.id}: ${story.title}`;
+  const closesClause = story.githubIssue ? `Closes #${story.githubIssue}` : '';
+
+  // Determine target branch - if story has dependencies, target their branch
+  let targetBranch = 'main';
+  if (story.dependsOn?.length > 0) {
+    // For stacked PRs, target the dependency's branch if available
+    // This will be updated by the agent when it has PRD context
+  }
+
+  const body = `${closesClause}
+
+## Summary
+${story.description}
+
+## Acceptance Criteria
+${story.acceptanceCriteria.map(ac => `- [ ] ${ac}`).join('\n')}
+`;
+
+  try {
+    // Push branch first
+    execSync('git push -u origin HEAD', { stdio: 'pipe' });
+
+    // Create PR using gh CLI
+    const result = execSync(`gh pr create --title "${title.replace(/"/g, '\\"')}" --body "${body.replace(/"/g, '\\"')}" --base ${targetBranch}`, { stdio: 'pipe' }).toString().trim();
+
+    // Extract PR number from URL
+    const prMatch = result.match(/\/pull\/(\d+)/);
+    return prMatch ? parseInt(prMatch[1]) : null;
+  } catch (err) {
+    console.log(chalk.yellow(`Failed to create PR: ${err.message}`));
+    return null;
+  }
+}
+
+async function attemptConflictResolution(story, config) {
+  try {
+    // Try to rebase on main
+    execSync('git fetch origin main', { stdio: 'pipe' });
+    execSync('git rebase origin/main', { stdio: 'pipe' });
+    return true;
+  } catch {
+    // Rebase failed - abort and mark blocked
+    try {
+      execSync('git rebase --abort', { stdio: 'pipe' });
+    } catch {
+      // Already aborted or not in rebase state
+    }
+    return false;
+  }
+}
+
+async function ghCheck() {
+  const spinner = ora();
+
+  spinner.start('Checking GitHub CLI installation...');
+  if (!checkGitHubCLI()) {
+    spinner.fail('GitHub CLI (gh) not installed');
+    console.log(chalk.yellow('\n  Install: brew install gh\n'));
+    return;
+  }
+  spinner.succeed('GitHub CLI installed');
+
+  spinner.start('Checking authentication...');
+  const authed = await checkGitHubAuth();
+  if (authed) {
+    spinner.succeed('Authenticated with GitHub');
+
+    // Show current user
+    try {
+      const user = execSync('gh api user --jq .login', { stdio: 'pipe' }).toString().trim();
+      console.log(chalk.gray(`  Logged in as: ${user}`));
+    } catch {
+      // Ignore errors fetching user info
+    }
+  } else {
+    spinner.fail('Not authenticated');
+    console.log(chalk.yellow('\n  Run: gh auth login\n'));
+  }
+}
+
+async function ghImport(issueNumber) {
+  if (!issueNumber) {
+    console.log(chalk.red('Usage: ralph gh import <issue-number>'));
+    return;
+  }
+
+  const ralphDir = join(process.cwd(), '.ralph');
+  if (!existsSync(ralphDir)) {
+    console.log(chalk.red('Ralph not initialized. Run `ralph init` first.'));
+    return;
+  }
+
+  const configPath = join(ralphDir, 'config.json');
+  const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+  const prdPath = join(ralphDir, 'prd.json');
+  const prd = JSON.parse(readFileSync(prdPath, 'utf-8'));
+
+  const spinner = ora(`Fetching issue #${issueNumber}...`).start();
+
+  try {
+    const issueJson = execSync(`gh issue view ${issueNumber} --json number,title,body,labels`, { stdio: 'pipe' }).toString();
+    const issue = JSON.parse(issueJson);
+
+    spinner.succeed(`Found: ${issue.title}`);
+
+    // Determine next story number
+    const existingIds = prd.userStories.map(s => s.ticketId).filter(Boolean);
+    const nextNum = existingIds.length > 0 ? Math.max(...existingIds) + 1 : 1;
+    const ticketNum = String(nextNum).padStart(3, '0');
+
+    // Check for priority label
+    const priorityLabel = issue.labels?.find(l => l.name.startsWith('priority:'));
+    const priority = priorityLabel?.name === 'priority:high' ? 1 :
+                     priorityLabel?.name === 'priority:low' ? 3 : 2;
+
+    const newStory = {
+      id: `${config.ticketPrefix || 'US'}-${ticketNum}`,
+      ticketId: nextNum,
+      title: issue.title,
+      description: issue.body || issue.title,
+      acceptanceCriteria: [],
+      priority,
+      passes: false,
+      notes: '',
+      githubIssue: issue.number,
+      dependsOn: [],
+      branch: null,
+      pullRequest: null,
+      blocked: false
+    };
+
+    prd.userStories.push(newStory);
+    writeFileSync(prdPath, JSON.stringify(prd, null, 2));
+
+    console.log(chalk.green(`\nAdded story: ${newStory.id}`));
+    console.log(chalk.gray(`  Title: ${newStory.title}`));
+    console.log(chalk.gray(`  GitHub Issue: #${issue.number}`));
+    console.log(chalk.gray(`  Priority: ${priority}`));
+  } catch (err) {
+    spinner.fail('Failed to fetch issue');
+    console.log(chalk.red(`\n  ${err.message}`));
+  }
+}
+
+async function ghSync() {
+  const ralphDir = join(process.cwd(), '.ralph');
+  if (!existsSync(ralphDir)) {
+    console.log(chalk.red('Ralph not initialized. Run `ralph init` first.'));
+    return;
+  }
+
+  const { labelFilter } = await inquirer.prompt([{
+    type: 'input',
+    name: 'labelFilter',
+    message: 'Filter by label (leave empty for all open issues):',
+    default: ''
+  }]);
+
+  const spinner = ora('Fetching issues...').start();
+
+  try {
+    const args = ['issue', 'list', '--state', 'open', '--json', 'number,title,body,labels', '--limit', '50'];
+    if (labelFilter) {
+      args.push('--label', labelFilter);
+    }
+    const issuesJson = execSync(`gh ${args.join(' ')}`, { stdio: 'pipe' }).toString();
+    const issues = JSON.parse(issuesJson);
+
+    spinner.succeed(`Found ${issues.length} issues`);
+
+    if (issues.length === 0) {
+      console.log(chalk.yellow('No issues to import.'));
+      return;
+    }
+
+    // Show issues and confirm
+    console.log(chalk.bold('\nIssues to import:'));
+    issues.forEach(issue => {
+      console.log(chalk.gray(`  #${issue.number}: ${issue.title}`));
+    });
+
+    const { confirm } = await inquirer.prompt([{
+      type: 'confirm',
+      name: 'confirm',
+      message: `Import ${issues.length} issues?`,
+      default: true
+    }]);
+
+    if (!confirm) {
+      console.log(chalk.yellow('Aborted.'));
+      return;
+    }
+
+    // Import each issue
+    for (const issue of issues) {
+      await ghImport(String(issue.number));
+    }
+
+    console.log(chalk.green(`\nImported ${issues.length} issues.`));
+  } catch (err) {
+    spinner.fail('Failed to fetch issues');
+    console.log(chalk.red(`\n  ${err.message}`));
   }
 }
 
@@ -511,19 +867,64 @@ exit 1
 `;
 }
 
-function generatePrompt(agent) {
+function generatePrompt(agent, config = {}) {
+  const gitInstructions = config.git?.provider === 'github' ? `
+## Git Workflow (Branch per Story)
+
+Before starting a story:
+1. **Check story.branch** - if null, create a new branch
+2. **Branch naming**: \`${config.ticketPrefix || 'US'}-XXX-kebab-title\`
+3. **Base branch**:
+   - If story.dependsOn is empty → branch from main
+   - If story.dependsOn has values → branch from that story's branch
+
+To create branch:
+${config.git?.useXgit ? `\`xgit b <ticketId> "<title>"\` (preferred)` : `\`git checkout main && git pull && git checkout -b <branch-name>\``}
+
+After completing a story:
+1. **Commit** all changes
+2. **Push** branch: \`git push -u origin HEAD\`
+3. **Create PR**:
+   \`\`\`bash
+   gh pr create --title "${config.ticketPrefix || 'US'}-XXX: Story title" --body "Closes #<githubIssue if set>
+
+   ## Summary
+   <description>
+
+   ## Changes
+   <list files changed>"
+   \`\`\`
+4. **Update prd.json**:
+   - Set \`branch\` to the branch name
+   - Set \`pullRequest\` to the PR number
+   - Set \`passes: true\`
+
+If merge conflicts occur:
+1. Try \`git fetch origin main && git rebase origin/main\`
+2. If conflicts can't be resolved automatically:
+   - \`git rebase --abort\`
+   - Set \`blocked: true\` in prd.json
+   - Move to next story without \`dependsOn\` pointing to blocked story
+` : `
+## Git Workflow
+
+- Commit changes with: \`feat: [Story ID] - [Story Title]\`
+- Keep all work on the configured branch
+`;
+
   return `## Your Task
 
 You are Ralph, an autonomous AI coding agent. Follow these steps precisely:
 
 1. **Read the PRD** at \`.ralph/prd.json\`
 2. **Read progress.txt** at \`.ralph/progress.txt\` - check Codebase Patterns section first
-3. **Check branch** - ensure you're on the correct branch from PRD \`branchName\`. Create from main if needed.
-4. **Pick ONE story** - the highest priority story where \`passes: false\`
-5. **Implement** that single user story completely
-6. **Run quality checks** - typecheck, lint, test (whatever the project uses)
-7. **Commit** if checks pass: \`feat: [Story ID] - [Story Title]\`
-8. **Update prd.json** - set \`passes: true\` for the completed story
+3. **Read config** at \`.ralph/config.json\` - note ticketPrefix and git settings
+4. **Pick ONE story** - the highest priority story where \`passes: false\` and \`blocked: false\`
+5. **Check dependencies** - if story.dependsOn has IDs, verify those stories have \`passes: true\`
+${gitInstructions}
+6. **Implement** that single user story completely
+7. **Run quality checks** - typecheck, lint, test (whatever the project uses)
+8. **Update prd.json** - set \`passes: true\`, update \`branch\` and \`pullRequest\` if applicable
 9. **Append to progress.txt** using the format below
 
 ## Progress Report Format
@@ -534,22 +935,17 @@ APPEND to .ralph/progress.txt (never replace, always append):
 ## [Date/Time] - [Story ID]
 - What was implemented
 - Files changed
+- Branch: <branch name>
+- PR: #<number> (if created)
 - **Learnings for future iterations:**
   - Patterns discovered
   - Gotchas encountered
-  - Useful context
 ---
 \`\`\`
 
 ## Consolidate Patterns
 
-If you discover a reusable pattern, add it to the \`## Codebase Patterns\` section at the TOP of progress.txt:
-
-\`\`\`
-## Codebase Patterns
-- Pattern: description
-- Pattern: description
-\`\`\`
+If you discover a reusable pattern, add it to the \`## Codebase Patterns\` section at the TOP of progress.txt.
 
 ## Quality Requirements
 
@@ -561,11 +957,11 @@ If you discover a reusable pattern, add it to the \`## Codebase Patterns\` secti
 
 ## Stop Condition
 
-After completing a user story, check if ALL stories have \`passes: true\`.
+After completing a user story, check if ALL stories have \`passes: true\` (ignoring \`blocked: true\` stories).
 
-If ALL stories are complete: output \`<promise>COMPLETE</promise>\`
+If ALL non-blocked stories are complete: output \`<promise>COMPLETE</promise>\`
 
-If stories remain with \`passes: false\`: end normally (next iteration will continue)
+If stories remain with \`passes: false\` and \`blocked: false\`: end normally (next iteration will continue)
 
 ## Important Rules
 
@@ -603,8 +999,7 @@ Add priority levels (high/medium/low) to tasks.
 `;
 }
 
-function convertToPRDJson(content) {
-  // Simple conversion - in practice, AI would do better
+function convertToPRDJson(content, ticketPrefix = 'US') {
   const lines = content.split('\n');
   const stories = [];
   let currentStory = null;
@@ -620,14 +1015,22 @@ function convertToPRDJson(content) {
         stories.push(currentStory);
       }
       storyCount++;
+      const ticketNum = String(storyCount).padStart(3, '0');
       currentStory = {
-        id: `US-${String(storyCount).padStart(3, '0')}`,
+        id: `${ticketPrefix}-${ticketNum}`,
+        ticketId: storyCount,
         title: match[2],
         description: match[2],
         acceptanceCriteria: [],
         priority: storyCount,
         passes: false,
-        notes: ''
+        notes: '',
+        // Git-related fields
+        githubIssue: null,
+        dependsOn: [],
+        branch: null,
+        pullRequest: null,
+        blocked: false
       };
     } else if (currentStory && trimmed.startsWith('-')) {
       currentStory.acceptanceCriteria.push(trimmed.substring(1).trim());
@@ -646,7 +1049,7 @@ function convertToPRDJson(content) {
   };
 }
 
-function getEmptyPRD() {
+function getEmptyPRD(ticketPrefix = 'US') {
   return {
     project: 'MyProject',
     branchName: 'ralph/feature',
