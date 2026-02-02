@@ -1,0 +1,22 @@
+{
+  "name": "ralphmode",
+  "version": "1.0.0",
+  "description": "Ralph Wiggum mode CLI - autonomous AI coding agent loop",
+  "type": "module",
+  "bin": {
+    "ralph": "./bin/ralph.js",
+    "rw": "./bin/ralph.js"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["ai", "autonomous", "coding", "ralph", "claude", "codex", "gemini"],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.18.1",
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "inquirer": "^9.2.12",
+    "ora": "^8.0.1"
+  }
+}
