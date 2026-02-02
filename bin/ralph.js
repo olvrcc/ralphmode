@@ -133,14 +133,20 @@ async function initProject() {
   const isInstalled = checkAgentInstalled(agent);
   if (!isInstalled) {
     spinner.fail(`${AGENTS[agent].name} not found`);
-    console.log(chalk.yellow(`\nPlease install ${AGENTS[agent].name} first:`));
+    console.log(chalk.yellow(`\nPlease install ${AGENTS[agent].name} first:\n`));
     if (agent === 'claude') {
-      console.log(chalk.gray('  npm install -g @anthropic-ai/claude-code'));
+      console.log(chalk.white('  curl -fsSL https://claude.ai/install.sh | bash'));
+      console.log(chalk.gray('\n  Docs: https://code.claude.com/docs/en/quickstart'));
     } else if (agent === 'codex') {
-      console.log(chalk.gray('  npm install -g @openai/codex'));
+      console.log(chalk.white('  npm i -g @openai/codex'));
+      console.log(chalk.gray('  # or'));
+      console.log(chalk.white('  brew install --cask codex'));
+      console.log(chalk.gray('\n  Docs: https://developers.openai.com/codex/quickstart/'));
     } else {
-      console.log(chalk.gray('  npm install -g @anthropic-ai/gemini-cli'));
+      console.log(chalk.white('  npm install -g @google/gemini-cli'));
+      console.log(chalk.gray('\n  Docs: https://github.com/google-gemini/gemini-cli'));
     }
+    console.log('');
     return;
   }
   spinner.succeed(`${AGENTS[agent].name} installed`);
