@@ -212,12 +212,23 @@ async function initProject() {
     default: 30
   }]);
 
-  // Step 6: Set up sandy sandbox
+  // Step 6: Check sandy (required for AFK Ralph)
+  spinner.start('Checking sandy...');
+  let sandyInstalled = false;
+  try {
+    execSync('sandy --version', { stdio: 'pipe' });
+    sandyInstalled = true;
+    spinner.succeed('Sandy installed');
+  } catch {
+    spinner.warn('Sandy not installed');
+    console.log(chalk.yellow('\n  Sandy is required for AFK Ralph mode.'));
+    console.log(chalk.gray('  Install: https://github.com/anthropics/sandy\n'));
+  }
+
+  // Create sandy.json
   const sandyJsonPath = join(process.cwd(), 'sandy.json');
   if (!existsSync(sandyJsonPath)) {
-    spinner.start('Setting up sandy sandbox...');
-
-    // Create sandy.json with sensible defaults for AI agents
+    spinner.start('Creating sandy.json...');
     const sandyConfig = {
       allowedHosts: [
         'api.anthropic.com',
@@ -247,11 +258,8 @@ async function initProject() {
       },
       env: {}
     };
-
     writeFileSync(sandyJsonPath, JSON.stringify(sandyConfig, null, 2));
-    spinner.succeed('Sandy sandbox configured');
-  } else {
-    console.log(chalk.gray('  sandy.json already exists, skipping'));
+    spinner.succeed('sandy.json created');
   }
 
   // Step 7: Create ralph directory and files
@@ -367,22 +375,18 @@ async function runRalph(args) {
     }
   }
 
-  // Start sandy sandbox
-  const spinner = ora('Starting sandy sandbox...').start();
-
+  // Check sandy
+  const spinner = ora('Checking sandy...').start();
   try {
-    // Check if sandy is available
     execSync('sandy --version', { stdio: 'pipe' });
+    spinner.succeed('Sandy available');
   } catch {
     spinner.fail('Sandy not found');
-    console.log(chalk.yellow('\nPlease ensure sandy is installed and available.'));
+    console.log(chalk.yellow('\nSandy is required. Install: https://github.com/anthropics/sandy'));
     return;
   }
 
-  spinner.succeed('Sandy available');
-
-  // Start sandbox and run ralph
-  console.log(chalk.cyan('\nLaunching sandbox...\n'));
+  console.log(chalk.cyan('\nLaunching in sandy sandbox...\n'));
 
   const sandyProcess = spawn('sandy', ['run', `./.ralph/ralph.sh ${iterations}`], {
     cwd: process.cwd(),
@@ -392,9 +396,9 @@ async function runRalph(args) {
 
   sandyProcess.on('close', (code) => {
     if (code === 0) {
-      console.log(chalk.green.bold('\n Ralph completed successfully!'));
+      console.log(chalk.green.bold('\nRalph completed successfully!'));
     } else {
-      console.log(chalk.yellow(`\n Ralph exited with code ${code}`));
+      console.log(chalk.yellow(`\nRalph exited with code ${code}`));
     }
     showStatus();
   });
