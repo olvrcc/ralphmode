@@ -7,6 +7,7 @@ topic: "PRD Creation Skills and GitHub Issues Integration"
 tags: [research, prd, github, skills, feature-planning]
 status: complete
 last_updated: 2026-02-02
+last_updated_note: "Added branch+PR workflow, resolved design decisions"
 ---
 
 # Research: PRD Creation Skills and GitHub Issues Integration
@@ -262,66 +263,112 @@ ralph init --prd-file ./requirements.md
 
 **New Commands**:
 ```bash
-ralph gh sync           # Bidirectional sync
+ralph gh sync           # Import issues to prd.json
 ralph gh import 123     # Import single issue as story
-ralph gh status         # Update issue with ralph progress
+ralph gh check          # Verify gh auth status
 ```
 
-**Sync Workflow**:
+**Branch + PR Workflow** (per task):
 
 ```
-GitHub Issue              Ralph Story
-+--------------+          +--------------+
-| #123         |  import  | US-123       |
-| Open         | -------> | passes:false |
-| label:todo   |          |              |
-+--------------+          +--------------+
-       |                        |
-       |                        | ralph run
-       |                        | completes
-       |                        v
-       |                 +--------------+
-       |    feedback     | US-123       |
-       | <-------------- | passes:true  |
-       v                 +--------------+
-+--------------+
-| #123         |
-| Closed       |
-| label:done   |
-| Comment:     |
-| "Completed"  |
-+--------------+
+GitHub Issue #42: "Add user authentication"
+                    │
+                    ▼ ralph gh import 42
+┌─────────────────────────────────────────────────────────────┐
+│ prd.json: US-042 { githubIssue: 42, branch: null, pr: null }│
+└─────────────────────────────────────────────────────────────┘
+                    │
+                    ▼ ralph run starts US-042
+┌─────────────────────────────────────────────────────────────┐
+│ 1. git checkout -b ralph/US-042-user-auth main              │
+│ 2. Do work, commit to branch                                │
+│ 3. git push -u origin ralph/US-042-user-auth                │
+│ 4. gh pr create --body "Closes #42" (uses PR template)      │
+│ 5. Update prd.json: branch, pr fields                       │
+│ 6. Mark US-042 passes: true                                 │
+└─────────────────────────────────────────────────────────────┘
+                    │
+                    ▼ Next task US-043
+┌─────────────────────────────────────────────────────────────┐
+│ IF US-043.dependsOn includes US-042:                        │
+│   git checkout -b ralph/US-043-next ralph/US-042-user-auth  │
+│ ELSE:                                                       │
+│   git checkout -b ralph/US-043-next main                    │
+└─────────────────────────────────────────────────────────────┘
+                    │
+                    ▼ PR merged by human
+┌─────────────────────────────────────────────────────────────┐
+│ GitHub auto-closes #42 via "Closes #42" in PR description   │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-**Status Feedback Options**:
-- Auto-comment on issue when story starts
-- Update labels (status:todo → status:in-progress → status:done)
-- Close issue when story passes
-- Link to commit/PR in comment
+**Key principle**: Ralph creates PRs, humans merge them, GitHub closes issues automatically.
 
-**Implementation** (using execFile for safety):
-```javascript
-import { execFile } from 'child_process';
+**PR Creation** (using project template if exists):
+```bash
+# Check for PR template
+if [ -f .github/PULL_REQUEST_TEMPLATE.md ]; then
+  # gh pr create uses it automatically
+fi
 
-// In ralph.sh loop, after story completion:
-const issue = story.githubIssue;
-if (issue) {
-  execFile('gh', ['issue', 'edit', String(issue),
-    '--remove-label', 'status:in-progress',
-    '--add-label', 'status:done']);
-  execFile('gh', ['issue', 'close', String(issue),
-    '--comment', `Completed by ralph in commit ${commitHash}`]);
-}
+gh pr create \
+  --title "US-042: Add user authentication" \
+  --body "$(cat <<EOF
+Closes #42
+
+## Summary
+[Auto-generated from story description]
+
+## Changes
+[List of commits]
+EOF
+)"
 ```
 
 **prd.json Extension**:
 ```javascript
 {
   userStories: [{
-    id: "US-001",
-    githubIssue: 123,  // NEW: link to GitHub issue
+    id: "US-042",
+    title: "Add user authentication",
+    githubIssue: 42,      // Link to issue
+    dependsOn: [],        // Story IDs this depends on (for branch chaining)
+    branch: null,         // Filled when work starts: "ralph/US-042-user-auth"
+    pullRequest: null,    // Filled when PR created: 156
+    passes: false,
     // ... other fields
   }]
+}
+```
+
+**Config Extension** (`.ralph/config.json`):
+```javascript
+{
+  agent: "claude",
+  maxIterations: 30,
+  createdAt: "...",
+  git: {
+    provider: "github",   // "github" | "bitbucket" | "gitlab" | "none"
+    createPRs: true,      // Create PRs for each story
+    usePRTemplate: true,  // Use .github/PULL_REQUEST_TEMPLATE.md
+    branchPrefix: "ralph" // Branch naming: ralph/US-XXX-slug
+  }
+}
+```
+
+**GH Auth Check** (during init and run):
+```javascript
+async function checkGitHubAuth() {
+  if (config.git?.provider !== 'github') return true;
+
+  try {
+    await execFile('gh', ['auth', 'status']);
+    return true;
+  } catch {
+    console.log(chalk.yellow('GitHub CLI not authenticated.'));
+    console.log('Run: gh auth login');
+    return false;
+  }
 }
 ```
 
@@ -342,18 +389,27 @@ if (issue) {
 |---------|------------|-------|----------|
 | `/prd` skill | Medium | High | 1 |
 | PRD validation | Low | Medium | 2 |
-| GH import | Medium | High | 3 |
-| GH status feedback | Medium | High | 4 |
-| Bidirectional sync | High | Medium | 5 |
+| Branch-per-task workflow | Medium | High | 3 |
+| GH issue import | Medium | High | 4 |
+| PR creation with template | Medium | High | 5 |
+| GH auth check | Low | Medium | 6 |
+| Non-GitHub provider support | Low | Medium | 7 |
 
 ---
 
+## Design Decisions (Resolved)
+
+1. **Skill Location**: `/prd` skill lives in ralphmode project (ralph-specific, outputs ralph's exact JSON schema)
+2. **GH Auth**: Check during init AND when kicked off. Config supports `git.provider: "none"` for non-GitHub projects
+3. **Issue Mapping**: 1:1 - one GitHub issue = one ralph story (simpler)
+4. **Project Boards**: Not supported - just issues (avoid complexity)
+5. **Issue Closing**: Ralph creates PRs with "Closes #XX", humans merge, GitHub auto-closes issues
+
 ## Open Questions
 
-1. **Skill Location**: Should `/prd` be a ralph-specific skill or a general superpowers skill?
-2. **GH Auth**: Assume `gh auth` is already configured, or add check during `ralph init`?
-3. **Multi-Issue Stories**: Can one ralph story span multiple GitHub issues, or 1:1 mapping?
-4. **Project Board Integration**: Support GitHub Projects for Kanban-style tracking?
+1. **Dependent PRs**: When US-043 branches from US-042's branch, should its PR target US-042's branch or main?
+2. **PR Review**: Should ralph wait for PR approval before starting next story, or continue?
+3. **Merge Conflicts**: How to handle when dependent branch has conflicts with main?
 
 ---
 
