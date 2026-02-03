@@ -1057,7 +1057,6 @@ async function prdCreate() {
   const claudeProcess = spawn(
     "claude",
     [
-      "--print",
       `Use the /prd skill to help me create a PRD called "${prdName}". Save it to .ralph/prds/${slug}.json. Guide me through the process step by step.`,
     ],
     {
