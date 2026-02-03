@@ -8,6 +8,7 @@ import {
   writeFileSync,
   mkdirSync,
   chmodSync,
+  readdirSync,
 } from "fs";
 import chalk from "chalk";
 import inquirer from "inquirer";
@@ -155,8 +156,14 @@ async function main() {
       await prdCreate();
     } else if (subcommand === "load") {
       await prdLoad(args[2]);
+    } else if (subcommand === "list" || subcommand === "ls") {
+      await prdList();
+    } else if (subcommand === "use") {
+      await prdUse(args[2]);
     } else {
-      console.log(chalk.yellow("Usage: ralph prd [create|load <file.md>]"));
+      console.log(
+        chalk.yellow("Usage: ralph prd [create|load <file>|list|use <name>]"),
+      );
     }
   } else if (
     command === "version" ||
@@ -192,6 +199,8 @@ ${chalk.bold("Commands:")}
   ${chalk.cyan("gh sync")}           Import all open GitHub issues
   ${chalk.cyan("prd create")}        Create PRD interactively (launches Claude)
   ${chalk.cyan("prd load")} <file>   Load PRD from markdown file
+  ${chalk.cyan("prd list")}          List all PRDs
+  ${chalk.cyan("prd use")} <name>    Switch active PRD
   ${chalk.cyan("help")}              Show this help message
   ${chalk.cyan("version")}           Show version number
 
@@ -994,7 +1003,6 @@ async function prdCreate() {
     console.log(chalk.yellow("Ralph not initialized. Initializing first...\n"));
     mkdirSync(ralphDir, { recursive: true });
 
-    // Create minimal config
     const projectName = process.cwd().split("/").pop();
     const ticketPrefix = generateTicketPrefix(projectName);
     const config = {
@@ -1010,15 +1018,47 @@ async function prdCreate() {
     );
   }
 
-  console.log(chalk.cyan("Launching Claude to create PRD...\n"));
-  console.log(chalk.gray("  Use /prd skill for guided PRD creation\n"));
+  // Ask for PRD name
+  const { prdName } = await inquirer.prompt([
+    {
+      type: "input",
+      name: "prdName",
+      message: "PRD name (e.g., dark-mode, auth-system):",
+      validate: (input) => input.trim().length > 0 || "Name required",
+    },
+  ]);
 
-  // Spawn Claude with instruction to use /prd skill
+  const slug = slugify(prdName);
+  const prdsDir = ensurePrdsDir();
+  const prdPath = join(prdsDir, `${slug}.json`);
+
+  // Check if exists
+  if (existsSync(prdPath)) {
+    const { overwrite } = await inquirer.prompt([
+      {
+        type: "confirm",
+        name: "overwrite",
+        message: `PRD "${slug}" already exists. Overwrite?`,
+        default: false,
+      },
+    ]);
+    if (!overwrite) {
+      console.log(chalk.yellow("Aborted."));
+      return;
+    }
+  }
+
+  console.log(chalk.cyan(`\nCreating PRD: ${slug}`));
+  console.log(chalk.cyan("Launching Claude...\n"));
+
+  // Set as active before launching Claude
+  setActivePrd(slug);
+
   const claudeProcess = spawn(
     "claude",
     [
       "--print",
-      "Use the /prd skill to help me create a PRD for this project. Guide me through the process step by step.",
+      `Use the /prd skill to help me create a PRD called "${prdName}". Save it to .ralph/prds/${slug}.json. Guide me through the process step by step.`,
     ],
     {
       cwd: process.cwd(),
@@ -1029,8 +1069,9 @@ async function prdCreate() {
 
   claudeProcess.on("close", (code) => {
     if (code === 0) {
-      console.log(chalk.green("\nPRD creation complete!"));
+      console.log(chalk.green(`\nPRD "${slug}" created and set as active!`));
       console.log(chalk.gray("  Run `ralph status` to see your stories"));
+      console.log(chalk.gray("  Run `ralph prd list` to see all PRDs"));
     }
   });
 }
@@ -1047,11 +1088,44 @@ async function prdLoad(filePath) {
   }
 
   const ralphDir = join(process.cwd(), ".ralph");
-
-  // Check if ralph is initialized
   if (!existsSync(ralphDir)) {
     console.log(chalk.yellow("Ralph not initialized. Run `ralph init` first."));
     return;
+  }
+
+  // Ask for PRD name
+  const defaultName = filePath
+    .split("/")
+    .pop()
+    .replace(/\.[^.]+$/, "");
+  const { prdName } = await inquirer.prompt([
+    {
+      type: "input",
+      name: "prdName",
+      message: "PRD name:",
+      default: slugify(defaultName),
+      validate: (input) => input.trim().length > 0 || "Name required",
+    },
+  ]);
+
+  const slug = slugify(prdName);
+  const prdsDir = ensurePrdsDir();
+  const prdPath = join(prdsDir, `${slug}.json`);
+
+  // Check if exists
+  if (existsSync(prdPath)) {
+    const { overwrite } = await inquirer.prompt([
+      {
+        type: "confirm",
+        name: "overwrite",
+        message: `PRD "${slug}" already exists. Overwrite?`,
+        default: false,
+      },
+    ]);
+    if (!overwrite) {
+      console.log(chalk.yellow("Aborted."));
+      return;
+    }
   }
 
   const configPath = join(ralphDir, "config.json");
@@ -1065,11 +1139,11 @@ async function prdLoad(filePath) {
     const content = readFileSync(filePath, "utf-8");
     const prdJson = convertToPRDJson(content, config.ticketPrefix || "US");
 
-    const prdPath = join(ralphDir, "prd.json");
     writeFileSync(prdPath, JSON.stringify(prdJson, null, 2));
+    setActivePrd(slug);
 
     spinner.succeed(
-      `Loaded ${prdJson.userStories.length} stories from ${filePath}`,
+      `Loaded ${prdJson.userStories.length} stories as "${slug}"`,
     );
 
     console.log(chalk.bold("\nStories loaded:"));
@@ -1077,12 +1151,122 @@ async function prdLoad(filePath) {
       console.log(chalk.gray(`  ${story.id}: ${story.title}`));
     });
 
-    console.log(chalk.cyan("\nRun `ralph status` to see full details"));
-    console.log(chalk.cyan("Run `ralph run` to start development"));
+    console.log(chalk.cyan(`\nPRD "${slug}" set as active`));
+    console.log(chalk.cyan("Run `ralph status` to see full details"));
   } catch (err) {
     spinner.fail("Failed to convert PRD");
     console.log(chalk.red(`\n  ${err.message}`));
   }
+}
+
+async function prdList() {
+  const ralphDir = join(process.cwd(), ".ralph");
+  if (!existsSync(ralphDir)) {
+    console.log(chalk.red("Ralph not initialized. Run `ralph init` first."));
+    return;
+  }
+
+  const prds = listPrds();
+  const activePrd = getActivePrdName();
+
+  if (prds.length === 0) {
+    console.log(chalk.yellow("\nNo PRDs found."));
+    console.log(chalk.gray("  Create one with: ralph prd create"));
+    return;
+  }
+
+  console.log(chalk.bold("\n PRDs:\n"));
+
+  for (const prdName of prds) {
+    const isActive = prdName === activePrd;
+    const prdPath = join(ralphDir, "prds", `${prdName}.json`);
+    const prd = JSON.parse(readFileSync(prdPath, "utf-8"));
+
+    const total = prd.userStories?.length || 0;
+    const done = prd.userStories?.filter((s) => s.passes).length || 0;
+    const progress = total > 0 ? `${done}/${total}` : "empty";
+
+    const marker = isActive ? chalk.green("▶") : " ";
+    const name = isActive ? chalk.green.bold(prdName) : prdName;
+    const stats = chalk.gray(`[${progress}]`);
+
+    console.log(`  ${marker} ${name} ${stats}`);
+  }
+
+  console.log(chalk.gray("\n  Use `ralph prd use <name>` to switch\n"));
+}
+
+async function prdUse(name) {
+  if (!name) {
+    console.log(chalk.red("Usage: ralph prd use <name>"));
+    return;
+  }
+
+  const ralphDir = join(process.cwd(), ".ralph");
+  if (!existsSync(ralphDir)) {
+    console.log(chalk.red("Ralph not initialized. Run `ralph init` first."));
+    return;
+  }
+
+  const prdsDir = join(ralphDir, "prds");
+  const prdPath = join(prdsDir, `${name}.json`);
+
+  if (!existsSync(prdPath)) {
+    console.log(chalk.red(`PRD "${name}" not found.`));
+    console.log(chalk.gray("  Run `ralph prd list` to see available PRDs"));
+    return;
+  }
+
+  setActivePrd(name);
+  console.log(chalk.green(`\nSwitched to PRD: ${name}`));
+  console.log(chalk.gray("  Run `ralph status` to see stories"));
+}
+
+// PRD Management Helper Functions
+function ensurePrdsDir() {
+  const prdsDir = join(process.cwd(), ".ralph", "prds");
+  mkdirSync(prdsDir, { recursive: true });
+  return prdsDir;
+}
+
+function getActivePrdName() {
+  const configPath = join(process.cwd(), ".ralph", "config.json");
+  if (!existsSync(configPath)) return null;
+  const config = JSON.parse(readFileSync(configPath, "utf-8"));
+  return config.activePrd || null;
+}
+
+function setActivePrd(name) {
+  const configPath = join(process.cwd(), ".ralph", "config.json");
+  const config = existsSync(configPath)
+    ? JSON.parse(readFileSync(configPath, "utf-8"))
+    : {};
+  config.activePrd = name;
+  writeFileSync(configPath, JSON.stringify(config, null, 2));
+
+  // Copy to .ralph/prd.json for backwards compatibility
+  const prdsDir = join(process.cwd(), ".ralph", "prds");
+  const sourcePath = join(prdsDir, `${name}.json`);
+  const destPath = join(process.cwd(), ".ralph", "prd.json");
+  if (existsSync(sourcePath)) {
+    writeFileSync(destPath, readFileSync(sourcePath, "utf-8"));
+  }
+}
+
+function listPrds() {
+  const prdsDir = join(process.cwd(), ".ralph", "prds");
+  if (!existsSync(prdsDir)) return [];
+
+  return readdirSync(prdsDir)
+    .filter((f) => f.endsWith(".json") && !f.startsWith("."))
+    .map((f) => f.replace(".json", ""));
+}
+
+function slugify(name) {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
 }
 
 function generateRalphScript(agent, maxIterations) {
@@ -1210,7 +1394,9 @@ You are Ralph, an autonomous AI coding agent. Follow these steps precisely:
 ${gitInstructions}
 6. **Implement** that single user story completely
 7. **Run quality checks** - typecheck, lint, test (whatever the project uses)
-8. **Update prd.json** - set \`passes: true\`, update \`branch\` and \`pullRequest\` if applicable
+8. **Update PRD files**:
+   - Update \`.ralph/prd.json\` - set \`passes: true\`, update \`branch\` and \`pullRequest\` if applicable
+   - If \`config.activePrd\` is set, also update \`.ralph/prds/<activePrd>.json\` to keep them in sync
 9. **Append to progress.txt** using the format below
 
 ## Progress Report Format

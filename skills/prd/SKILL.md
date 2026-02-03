@@ -80,7 +80,8 @@ Ask: "Does this look right? Any changes?"
 
 ## Output Format
 
-Write to `.ralph/prd.json`:
+Write to `.ralph/prds/<name>.json` where `<name>` is the slugified PRD name provided by the user.
+Also copy to `.ralph/prd.json` for backwards compatibility (ralph reads from prd.json).
 
 ```json
 {
@@ -106,6 +107,8 @@ Write to `.ralph/prd.json`:
   ]
 }
 ```
+
+After writing, also update `.ralph/config.json` to set `activePrd` to the PRD name.
 
 ## Ticket Prefix
 
@@ -149,14 +152,15 @@ Does this look right?"
 
 ## When Complete
 
-After writing prd.json:
+After writing the PRD files:
 
-"PRD created at `.ralph/prd.json` with X stories.
+"PRD created at `.ralph/prds/<name>.json` with X stories.
 
 Next steps:
 
 ````
 ralph status    # Review your stories
+ralph prd list  # See all PRDs
 ralph run       # Start autonomous development
 ```"
 ````
