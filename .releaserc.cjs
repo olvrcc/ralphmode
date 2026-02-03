@@ -9,7 +9,7 @@ module.exports = {
     [
       '@semantic-release/npm',
       {
-        npmPublish: !process.argv.includes('--dry-run'), // Skip npm publish during dry-run
+        npmPublish: false, // Skip npm publish (not set up yet)
       },
     ],
     // GitHub releases are optional - only created if GITHUB_TOKEN is set
