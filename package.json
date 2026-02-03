@@ -8,15 +8,46 @@
     "rw": "./bin/ralph.js"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "prepare": "husky",
+    "release": "semantic-release",
+    "release:dry-run": "semantic-release --dry-run"
   },
-  "keywords": ["ai", "autonomous", "coding", "ralph", "claude", "codex", "gemini"],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "ai",
+    "autonomous",
+    "coding",
+    "ralph",
+    "claude",
+    "codex",
+    "gemini"
+  ],
+  "author": "cameronolivier@gmail.com",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "packageManager": "pnpm@10.18.1",
   "dependencies": {
     "chalk": "^5.3.0",
     "inquirer": "^9.2.12",
     "ora": "^8.0.1"
+  },
+  "devDependencies": {
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/github": "^12.0.2",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.4",
+    "prettier": "^3.8.1",
+    "semantic-release": "^25.0.2"
+  },
+  "lint-staged": {
+    "*.{js,mjs}": [
+      "prettier --write"
+    ],
+    "*.{json,md,yml,yaml}": [
+      "prettier --write"
+    ]
   }
 }
