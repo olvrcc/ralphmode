@@ -149,6 +149,15 @@ async function main() {
     } else {
       console.log(chalk.yellow("Usage: ralph gh [check|import <number>|sync]"));
     }
+  } else if (command === "prd") {
+    const subcommand = args[1];
+    if (subcommand === "create") {
+      await prdCreate();
+    } else if (subcommand === "load") {
+      await prdLoad(args[2]);
+    } else {
+      console.log(chalk.yellow("Usage: ralph prd [create|load <file.md>]"));
+    }
   } else if (
     command === "version" ||
     command === "--version" ||
@@ -181,6 +190,8 @@ ${chalk.bold("Commands:")}
   ${chalk.cyan("gh check")}          Check GitHub CLI authentication
   ${chalk.cyan("gh import")} <n>     Import GitHub issue as story
   ${chalk.cyan("gh sync")}           Import all open GitHub issues
+  ${chalk.cyan("prd create")}        Create PRD interactively (launches Claude)
+  ${chalk.cyan("prd load")} <file>   Load PRD from markdown file
   ${chalk.cyan("help")}              Show this help message
   ${chalk.cyan("version")}           Show version number
 
@@ -971,6 +982,105 @@ async function ghSync() {
     console.log(chalk.green(`\nImported ${issues.length} issues.`));
   } catch (err) {
     spinner.fail("Failed to fetch issues");
+    console.log(chalk.red(`\n  ${err.message}`));
+  }
+}
+
+async function prdCreate() {
+  const ralphDir = join(process.cwd(), ".ralph");
+
+  // Check if ralph is initialized
+  if (!existsSync(ralphDir)) {
+    console.log(chalk.yellow("Ralph not initialized. Initializing first...\n"));
+    mkdirSync(ralphDir, { recursive: true });
+
+    // Create minimal config
+    const projectName = process.cwd().split("/").pop();
+    const ticketPrefix = generateTicketPrefix(projectName);
+    const config = {
+      agent: "claude",
+      maxIterations: 30,
+      createdAt: new Date().toISOString(),
+      ticketPrefix,
+      git: { provider: "none", createPRs: false },
+    };
+    writeFileSync(
+      join(ralphDir, "config.json"),
+      JSON.stringify(config, null, 2),
+    );
+  }
+
+  console.log(chalk.cyan("Launching Claude to create PRD...\n"));
+  console.log(chalk.gray("  Use /prd skill for guided PRD creation\n"));
+
+  // Spawn Claude with instruction to use /prd skill
+  const claudeProcess = spawn(
+    "claude",
+    [
+      "--print",
+      "Use the /prd skill to help me create a PRD for this project. Guide me through the process step by step.",
+    ],
+    {
+      cwd: process.cwd(),
+      stdio: "inherit",
+      shell: true,
+    },
+  );
+
+  claudeProcess.on("close", (code) => {
+    if (code === 0) {
+      console.log(chalk.green("\nPRD creation complete!"));
+      console.log(chalk.gray("  Run `ralph status` to see your stories"));
+    }
+  });
+}
+
+async function prdLoad(filePath) {
+  if (!filePath) {
+    console.log(chalk.red("Usage: ralph prd load <file.md>"));
+    return;
+  }
+
+  if (!existsSync(filePath)) {
+    console.log(chalk.red(`File not found: ${filePath}`));
+    return;
+  }
+
+  const ralphDir = join(process.cwd(), ".ralph");
+
+  // Check if ralph is initialized
+  if (!existsSync(ralphDir)) {
+    console.log(chalk.yellow("Ralph not initialized. Run `ralph init` first."));
+    return;
+  }
+
+  const configPath = join(ralphDir, "config.json");
+  const config = existsSync(configPath)
+    ? JSON.parse(readFileSync(configPath, "utf-8"))
+    : { ticketPrefix: "US" };
+
+  const spinner = ora("Converting PRD to JSON...").start();
+
+  try {
+    const content = readFileSync(filePath, "utf-8");
+    const prdJson = convertToPRDJson(content, config.ticketPrefix || "US");
+
+    const prdPath = join(ralphDir, "prd.json");
+    writeFileSync(prdPath, JSON.stringify(prdJson, null, 2));
+
+    spinner.succeed(
+      `Loaded ${prdJson.userStories.length} stories from ${filePath}`,
+    );
+
+    console.log(chalk.bold("\nStories loaded:"));
+    prdJson.userStories.forEach((story) => {
+      console.log(chalk.gray(`  ${story.id}: ${story.title}`));
+    });
+
+    console.log(chalk.cyan("\nRun `ralph status` to see full details"));
+    console.log(chalk.cyan("Run `ralph run` to start development"));
+  } catch (err) {
+    spinner.fail("Failed to convert PRD");
     console.log(chalk.red(`\n  ${err.message}`));
   }
 }
