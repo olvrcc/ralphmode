@@ -51,6 +51,68 @@ const AGENTS = {
   },
 };
 
+// Gradient text helpers
+function hexToRgb(hex) {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result
+    ? {
+        r: parseInt(result[1], 16),
+        g: parseInt(result[2], 16),
+        b: parseInt(result[3], 16),
+      }
+    : null;
+}
+
+function interpolateColor(color1, color2, factor) {
+  return {
+    r: Math.round(color1.r + (color2.r - color1.r) * factor),
+    g: Math.round(color1.g + (color2.g - color1.g) * factor),
+    b: Math.round(color1.b + (color2.b - color1.b) * factor),
+  };
+}
+
+function gradientText(text, colors) {
+  const rgbColors = colors.map(hexToRgb);
+  const chars = text.split("");
+  const nonSpaceIndices = chars
+    .map((c, i) => (c !== " " ? i : -1))
+    .filter((i) => i !== -1);
+  const totalNonSpace = nonSpaceIndices.length;
+
+  return chars
+    .map((char, i) => {
+      if (char === " " || char === "\n") return char;
+
+      const posInGradient = nonSpaceIndices.indexOf(i);
+      const progress =
+        totalNonSpace > 1 ? posInGradient / (totalNonSpace - 1) : 0;
+
+      // Map progress to color segments
+      const segment = progress * (rgbColors.length - 1);
+      const colorIndex = Math.min(Math.floor(segment), rgbColors.length - 2);
+      const segmentProgress = segment - colorIndex;
+
+      const color = interpolateColor(
+        rgbColors[colorIndex],
+        rgbColors[colorIndex + 1],
+        segmentProgress,
+      );
+      return chalk.rgb(color.r, color.g, color.b).bold(char);
+    })
+    .join("");
+}
+
+function printBanner() {
+  const banner = `  ╦═╗╔═╗╦  ╔═╗╦ ╦  ╦ ╦╦╔═╗╔═╗╦ ╦╔╦╗
+  ╠╦╝╠═╣║  ╠═╝╠═╣  ║║║║║ ╦║ ╦║ ║║║║
+  ╩╚═╩ ╩╩═╝╩  ╩ ╩  ╚╩╝╩╚═╝╚═╝╚═╝╩ ╩`;
+
+  // Warm sunset gradient: gold → orange → coral → hot pink → orchid
+  const colors = ["#FFD700", "#FF8C00", "#FF6B6B", "#FF1493", "#DA70D6"];
+
+  console.log("\n" + gradientText(banner, colors) + "\n");
+}
+
 function generateTicketPrefix(projectName) {
   // Extract consonants, uppercase, take first 3
   const consonants = projectName.replace(/[aeiou]/gi, "").toUpperCase();
@@ -60,13 +122,7 @@ function generateTicketPrefix(projectName) {
 }
 
 async function main() {
-  console.log(
-    chalk.yellow.bold(`
-  ╦═╗╔═╗╦  ╔═╗╦ ╦  ╦ ╦╦╔═╗╔═╗╦ ╦╔╦╗
-  ╠╦╝╠═╣║  ╠═╝╠═╣  ║║║║║ ╦║ ╦║ ║║║║
-  ╩╚═╩ ╩╩═╝╩  ╩ ╩  ╚╩╝╩╚═╝╚═╝╚═╝╩ ╩
-  `),
-  );
+  printBanner();
   console.log(chalk.gray("  Autonomous AI Coding Agent Loop\n"));
 
   const args = process.argv.slice(2);
