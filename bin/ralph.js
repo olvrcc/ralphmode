@@ -1062,7 +1062,6 @@ async function prdCreate() {
     {
       cwd: process.cwd(),
       stdio: "inherit",
-      shell: true,
     },
   );
 
