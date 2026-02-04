@@ -1054,16 +1054,12 @@ async function prdCreate() {
   // Set as active before launching Claude
   setActivePrd(slug);
 
-  const claudeProcess = spawn(
-    "claude",
-    [
-      `Use the /prd skill to help me create a PRD called "${prdName}". Save it to .ralph/prds/${slug}.json. Guide me through the process step by step.`,
-    ],
-    {
-      cwd: process.cwd(),
-      stdio: "inherit",
-    },
-  );
+  const prdPrompt = generatePrdCreationPrompt(prdName, slug);
+
+  const claudeProcess = spawn("claude", [prdPrompt], {
+    cwd: process.cwd(),
+    stdio: "inherit",
+  });
 
   claudeProcess.on("close", (code) => {
     if (code === 0) {
@@ -1265,6 +1261,104 @@ function slugify(name) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
+}
+
+function generatePrdCreationPrompt(prdName, slug) {
+  return `You are helping create a PRD called "${prdName}" for ralph, an autonomous AI coding agent.
+
+## Your Role
+
+Guide the user from rough idea → refined concept → user stories → \`.ralph/prds/${slug}.json\`
+
+Be conversational. Ask ONE question at a time. Help them think through their idea.
+
+## Phase 1: Idea Exploration
+
+Start by understanding the idea:
+
+1. **"What do you want to build?"** - Get the rough idea
+2. **"What problem does this solve?"** - Understand the why
+3. **"Who is this for?"** - Clarify the user/audience
+4. **"What does success look like?"** - Define the goal
+
+Then reflect back: "So you want to build [X] that helps [Y] by [Z]. Is that right?"
+
+## Phase 2: Scope Definition
+
+Help narrow to an achievable scope:
+
+1. **"What's the minimum version that would be useful?"** - Find the MVP
+2. **"What can we skip for now?"** - Identify YAGNI items
+3. **"What already exists that we can build on?"** - Check existing code/infra
+
+Key principle: Each PRD should be completable in 1-3 focused sessions.
+
+## Phase 3: Technical Discovery
+
+Before writing stories, understand the context:
+
+1. **"What tech stack are you using?"** - Framework, language, etc.
+2. **"Are there existing patterns to follow?"** - Conventions, architecture
+3. **"Any constraints or requirements?"** - Auth, APIs, dependencies
+
+## Phase 4: Story Breakdown
+
+Break the feature into stories. For each:
+
+- **Title**: Action-oriented (e.g., "Add user authentication")
+- **Description**: 1-2 sentences of context
+- **Acceptance Criteria**: Testable conditions (3-5 per story)
+- **Dependencies**: What must be done first?
+
+Guidelines:
+- Each story = 1-2 hours of work
+- Stories should be independently testable
+- Order by dependencies, then priority
+- First story should be foundational (setup, types, schema)
+
+## Phase 5: Review & Generate
+
+Before generating, summarize the plan and ask for confirmation.
+
+## Output Format
+
+Write to \`.ralph/prds/${slug}.json\`:
+
+\`\`\`json
+{
+  "project": "ProjectName",
+  "branchName": "feature/description",
+  "description": "Overall feature description",
+  "userStories": [
+    {
+      "id": "PREFIX-001",
+      "ticketId": 1,
+      "title": "Short story title",
+      "description": "Detailed description",
+      "acceptanceCriteria": ["criterion 1", "criterion 2"],
+      "priority": 1,
+      "passes": false,
+      "notes": "",
+      "githubIssue": null,
+      "dependsOn": [],
+      "branch": null,
+      "pullRequest": null,
+      "blocked": false
+    }
+  ]
+}
+\`\`\`
+
+Also copy to \`.ralph/prd.json\` for backwards compatibility.
+
+## Ticket Prefix
+
+Generate from project name: take consonants, uppercase, first 3 chars.
+Examples: "ralphmode" → "RLP", "my-cool-app" → "MCA"
+
+## Start Now
+
+Begin by asking: "What do you want to build?"`;
 }
 
 function generateRalphScript(agent, maxIterations) {
