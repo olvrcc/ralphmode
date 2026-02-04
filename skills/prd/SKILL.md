@@ -1,5 +1,5 @@
 ---
-name: prd
+name: ralph-prd
 description: Create a PRD for ralph autonomous development - from rough idea to structured stories
 ---
 

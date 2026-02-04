@@ -9,7 +9,11 @@ import {
   mkdirSync,
   chmodSync,
   readdirSync,
+  symlinkSync,
+  unlinkSync,
+  lstatSync,
 } from "fs";
+import { homedir } from "os";
 import chalk from "chalk";
 import inquirer from "inquirer";
 import ora from "ora";
@@ -18,6 +22,7 @@ import { execSync, spawn } from "child_process";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const TEMPLATES_DIR = join(__dirname, "..", "templates");
+const SKILLS_DIR = join(__dirname, "..", "skills");
 
 // Get version from package.json
 const packageJson = JSON.parse(
@@ -515,6 +520,14 @@ Started: ${new Date().toISOString()}
   }
 
   spinner.succeed("Ralph files created");
+
+  // Install ralph skills to ~/.claude/skills/
+  const installedSkills = installRalphSkills();
+  if (installedSkills.length > 0) {
+    console.log(
+      chalk.gray(`  Installed skills: ${installedSkills.join(", ")}`),
+    );
+  }
 
   // Step 8: Offer to start sandbox
   console.log("\n" + chalk.green.bold("Ralph initialized successfully!"));
@@ -1057,7 +1070,7 @@ async function prdCreate() {
   const claudeProcess = spawn(
     "claude",
     [
-      `Use the /prd skill to help me create a PRD called "${prdName}". Save it to .ralph/prds/${slug}.json. Guide me through the process step by step.`,
+      `Use the /ralph-prd skill to create a PRD called "${prdName}". Save to .ralph/prds/${slug}.json`,
     ],
     {
       cwd: process.cwd(),
@@ -1265,6 +1278,43 @@ function slugify(name) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
+}
+
+function installRalphSkills() {
+  const claudeSkillsDir = join(homedir(), ".claude", "skills");
+  mkdirSync(claudeSkillsDir, { recursive: true });
+
+  // Get all skills from ralph's skills directory
+  if (!existsSync(SKILLS_DIR)) return [];
+
+  const installed = [];
+  const skillFolders = readdirSync(SKILLS_DIR).filter((f) => {
+    const skillPath = join(SKILLS_DIR, f);
+    return existsSync(join(skillPath, "SKILL.md"));
+  });
+
+  for (const skill of skillFolders) {
+    const sourcePath = join(SKILLS_DIR, skill);
+    const targetPath = join(claudeSkillsDir, `ralph-${skill}`);
+
+    try {
+      // Remove existing symlink/file if present
+      if (existsSync(targetPath)) {
+        const stats = lstatSync(targetPath);
+        if (stats.isSymbolicLink() || stats.isFile()) {
+          unlinkSync(targetPath);
+        }
+      }
+
+      // Create symlink
+      symlinkSync(sourcePath, targetPath, "dir");
+      installed.push(`ralph-${skill}`);
+    } catch (err) {
+      // Ignore errors, skill just won't be available
+    }
+  }
+
+  return installed;
 }
 
 function generateRalphScript(agent, maxIterations) {
