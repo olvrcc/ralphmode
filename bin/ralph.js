@@ -1368,14 +1368,17 @@ for i in $(seq 1 $MAX_ITERATIONS); do
   echo "═══════════════════════════════════════════════════════"
   echo ""
 
-  # Run the agent
+  # Run the agent - stream output live, capture to file for checks
+  OUTPUT_FILE=$(mktemp)
   ${
     agent === "claude"
-      ? `OUTPUT=$(claude ${agentConfig.dangerousFlag} ${agentConfig.printFlag} < "$PROMPT_FILE" 2>&1 | tee /dev/stderr) || true`
+      ? `claude ${agentConfig.dangerousFlag} ${agentConfig.printFlag} < "$PROMPT_FILE" 2>&1 | tee "$OUTPUT_FILE" || true`
       : agent === "codex"
-        ? `OUTPUT=$(codex ${agentConfig.dangerousFlag} -q "$(cat $PROMPT_FILE)" 2>&1 | tee /dev/stderr) || true`
-        : `OUTPUT=$(gemini ${agentConfig.dangerousFlag} -p "$(cat $PROMPT_FILE)" 2>&1 | tee /dev/stderr) || true`
+        ? `codex ${agentConfig.dangerousFlag} -q "$(cat $PROMPT_FILE)" 2>&1 | tee "$OUTPUT_FILE" || true`
+        : `gemini ${agentConfig.dangerousFlag} -p "$(cat $PROMPT_FILE)" 2>&1 | tee "$OUTPUT_FILE" || true`
   }
+  OUTPUT=$(cat "$OUTPUT_FILE")
+  rm -f "$OUTPUT_FILE"
 
   # Check for auth errors - don't retry
   if echo "$OUTPUT" | grep -qi "invalid api key\|please run /login\|not authenticated\|unauthorized"; then

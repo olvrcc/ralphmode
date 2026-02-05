@@ -202,7 +202,7 @@ Do the same pattern for codex and gemini agents.
 
 #### Automated Verification:
 
-- [ ] `node --check bin/ralph.js` passes
+- [x] `node --check bin/ralph.js` passes
 
 #### Manual Verification:
 
