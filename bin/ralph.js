@@ -633,17 +633,18 @@ async function runRalph(args) {
   }
   spinner.succeed(`${AGENTS[config.agent].name} authenticated`);
 
+  // Regenerate ralph.sh with current iterations and latest fixes
+  const ralphScript = generateRalphScript(config.agent, iterations);
+  writeFileSync(join(ralphDir, "ralph.sh"), ralphScript);
+  chmodSync(join(ralphDir, "ralph.sh"), "755");
+
   console.log(chalk.cyan("\nLaunching in sandy sandbox...\n"));
 
-  const sandyProcess = spawn(
-    "sandy",
-    ["run", `./.ralph/ralph.sh ${iterations}`],
-    {
-      cwd: process.cwd(),
-      stdio: "inherit",
-      shell: true,
-    },
-  );
+  const sandyProcess = spawn("sandy", ["run", "./.ralph/ralph.sh"], {
+    cwd: process.cwd(),
+    stdio: "inherit",
+    shell: true,
+  });
 
   sandyProcess.on("close", (code) => {
     if (code === 0) {
@@ -1349,7 +1350,7 @@ SCRIPT_DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
 PRD_FILE="$SCRIPT_DIR/prd.json"
 PROGRESS_FILE="$SCRIPT_DIR/progress.txt"
 PROMPT_FILE="$SCRIPT_DIR/${promptFile}"
-MAX_ITERATIONS=\${1:-${maxIterations}}
+MAX_ITERATIONS=${maxIterations}
 
 echo ""
 echo -e "\\033[1;33m╦═╗╔═╗╦  ╔═╗╦ ╦\\033[0m  \\033[1;31m╦ ╦╦╔═╗╔═╗╦ ╦╔╦╗\\033[0m"
