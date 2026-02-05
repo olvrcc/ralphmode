@@ -155,8 +155,9 @@ async function main() {
     } else {
       console.log(chalk.yellow("Usage: ralph gh [check|import <number>|sync]"));
     }
-  } else if (command === "prd") {
-    const subcommand = args[1];
+  } else if (command === "prd" || (command === "create" && args[1] === "prd")) {
+    // Support both "ralph prd create" and "ralph create prd"
+    const subcommand = command === "prd" ? args[1] : "create";
     if (subcommand === "create") {
       await prdCreate();
     } else if (subcommand === "load") {
