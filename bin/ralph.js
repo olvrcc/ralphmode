@@ -179,14 +179,12 @@ async function main() {
     console.log(`ralph v${VERSION}`);
   } else if (command === "help" || command === "--help" || command === "-h") {
     showHelp();
+  } else if (!command) {
+    // No command given - show help
+    showHelp();
   } else {
-    // Default: run init if no ralph files, otherwise run
-    const hasRalphSetup = existsSync(join(process.cwd(), ".ralph", "ralph.sh"));
-    if (hasRalphSetup) {
-      await runRalph(args);
-    } else {
-      await initProject();
-    }
+    console.log(chalk.red(`Unknown command: ${command}`));
+    console.log(chalk.gray("Run `ralph help` to see available commands\n"));
   }
 }
 
