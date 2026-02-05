@@ -615,6 +615,24 @@ async function runRalph(args) {
     return;
   }
 
+  // Check agent auth before launching loop
+  spinner.start(`Checking ${AGENTS[config.agent].name} authentication...`);
+  const isAuthed = await checkAgentAuth(config.agent);
+  if (!isAuthed) {
+    spinner.fail(`${AGENTS[config.agent].name} not authenticated`);
+    console.log(chalk.yellow(`\n  Please authenticate first:`));
+    if (config.agent === "claude") {
+      console.log(chalk.white("  claude /login"));
+    } else if (config.agent === "codex") {
+      console.log(chalk.white("  codex auth"));
+    } else {
+      console.log(chalk.white("  gemini auth"));
+    }
+    console.log(chalk.gray("\n  Then retry: ralph run\n"));
+    return;
+  }
+  spinner.succeed(`${AGENTS[config.agent].name} authenticated`);
+
   console.log(chalk.cyan("\nLaunching in sandy sandbox...\n"));
 
   const sandyProcess = spawn(
@@ -1358,6 +1376,16 @@ for i in $(seq 1 $MAX_ITERATIONS); do
         ? `OUTPUT=$(codex ${agentConfig.dangerousFlag} -q "$(cat $PROMPT_FILE)" 2>&1 | tee /dev/stderr) || true`
         : `OUTPUT=$(gemini ${agentConfig.dangerousFlag} -p "$(cat $PROMPT_FILE)" 2>&1 | tee /dev/stderr) || true`
   }
+
+  # Check for auth errors - don't retry
+  if echo "$OUTPUT" | grep -qi "invalid api key\|please run /login\|not authenticated\|unauthorized"; then
+    echo ""
+    echo "Authentication failed. Please authenticate your agent first:"
+    echo "  claude /login"
+    echo ""
+    echo "Then retry: ralph run"
+    exit 1
+  fi
 
   # Check for completion signal
   if echo "$OUTPUT" | grep -q "<promise>COMPLETE</promise>"; then

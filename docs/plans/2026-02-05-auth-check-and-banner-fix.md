@@ -111,7 +111,7 @@ Add a check in the bash loop so that if the output contains auth error indicator
 
 #### Automated Verification:
 
-- [ ] `node --check bin/ralph.js` passes
+- [x] `node --check bin/ralph.js` passes
 
 #### Manual Verification:
 
