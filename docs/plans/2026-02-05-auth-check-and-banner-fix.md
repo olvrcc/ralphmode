@@ -149,7 +149,7 @@ Uses yellow (33) for RALPH and red (31) for WIGGUM - basic ANSI that works every
 
 #### Automated Verification:
 
-- [ ] `node --check bin/ralph.js` passes
+- [x] `node --check bin/ralph.js` passes
 
 #### Manual Verification:
 

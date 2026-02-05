@@ -1352,9 +1352,9 @@ PROMPT_FILE="$SCRIPT_DIR/${promptFile}"
 MAX_ITERATIONS=\${1:-${maxIterations}}
 
 echo ""
-echo "╦═╗╔═╗╦  ╔═╗╦ ╦  ╦ ╦╦╔═╗╔═╗╦ ╦╔╦╗"
-echo "╠╦╝╠═╣║  ╠═╝╠═╣  ║║║║║ ╦║ ╦║ ║║║║"
-echo "╩╚═╩ ╩╩═╝╩  ╩ ╩  ╚╩╝╩╚═╝╚═╝╚═╝╩ ╩"
+echo -e "\\033[1;33m╦═╗╔═╗╦  ╔═╗╦ ╦\\033[0m  \\033[1;31m╦ ╦╦╔═╗╔═╗╦ ╦╔╦╗\\033[0m"
+echo -e "\\033[1;33m╠╦╝╠═╣║  ╠═╝╠═╣\\033[0m  \\033[1;31m║║║║║ ╦║ ╦║ ║║║║\\033[0m"
+echo -e "\\033[1;33m╩╚═╩ ╩╩═╝╩  ╩ ╩\\033[0m  \\033[1;31m╚╩╝╩╚═╝╚═╝╚═╝╩ ╩\\033[0m"
 echo ""
 echo "Agent: ${agentConfig.name}"
 echo "Max iterations: $MAX_ITERATIONS"
