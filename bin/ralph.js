@@ -1408,23 +1408,15 @@ for i in $(seq 1 $MAX_ITERATIONS); do
 
   # Run the agent - stream output live, capture to file for checks
   OUTPUT_FILE=$(mktemp)
-  AGENT_EXIT=0
   ${
     agent === "claude"
-      ? `timeout \${ITERATION_TIMEOUT} bash -c 'cat "$PROMPT_FILE" | claude ${agentConfig.dangerousFlag} -p 2>&1 | tee "$OUTPUT_FILE"' || AGENT_EXIT=$?`
+      ? `cat "$PROMPT_FILE" | timeout \${ITERATION_TIMEOUT} claude ${agentConfig.dangerousFlag} -p 2>&1 | tee "$OUTPUT_FILE" || true`
       : agent === "codex"
-        ? `timeout \${ITERATION_TIMEOUT} bash -c 'codex ${agentConfig.dangerousFlag} -q "$(cat $PROMPT_FILE)" 2>&1 | tee "$OUTPUT_FILE"' || AGENT_EXIT=$?`
-        : `timeout \${ITERATION_TIMEOUT} bash -c 'gemini ${agentConfig.dangerousFlag} -p "$(cat $PROMPT_FILE)" 2>&1 | tee "$OUTPUT_FILE"' || AGENT_EXIT=$?`
+        ? `timeout \${ITERATION_TIMEOUT} codex ${agentConfig.dangerousFlag} -q "$(cat "$PROMPT_FILE")" 2>&1 | tee "$OUTPUT_FILE" || true`
+        : `timeout \${ITERATION_TIMEOUT} gemini ${agentConfig.dangerousFlag} -p "$(cat "$PROMPT_FILE")" 2>&1 | tee "$OUTPUT_FILE" || true`
   }
   OUTPUT=$(cat "$OUTPUT_FILE")
   rm -f "$OUTPUT_FILE"
-
-  # Check if timed out (exit code 124)
-  if [ $AGENT_EXIT -eq 124 ]; then
-    echo ""
-    echo "Iteration $i timed out after \${ITERATION_TIMEOUT}s. Moving to next..."
-    continue
-  fi
 
   # Check for auth errors - don't retry
   if echo "$OUTPUT" | grep -qi "invalid api key\\|please run /login\\|not authenticated\\|unauthorized"; then
