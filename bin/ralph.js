@@ -638,6 +638,26 @@ async function runRalph(args) {
   writeFileSync(join(ralphDir, "ralph.sh"), ralphScript);
   chmodSync(join(ralphDir, "ralph.sh"), "755");
 
+  // Regenerate prompt file (ensures it exists and has latest template)
+  const promptFile = config.agent === "claude" ? "CLAUDE.md" : "prompt.md";
+  const promptContent = generatePrompt(config.agent, config);
+  writeFileSync(join(ralphDir, promptFile), promptContent);
+
+  // Create progress.txt if missing
+  if (!existsSync(join(ralphDir, "progress.txt"))) {
+    const progressContent = `## Codebase Patterns\n(Patterns discovered during implementation will be added here)\n\n---\n\n# Ralph Progress Log\nStarted: ${new Date().toISOString()}\n\n---\n`;
+    writeFileSync(join(ralphDir, "progress.txt"), progressContent);
+  }
+
+  // Create prd.json if missing
+  if (!existsSync(join(ralphDir, "prd.json"))) {
+    const emptyPrd = getEmptyPRD(config.ticketPrefix || "US");
+    writeFileSync(
+      join(ralphDir, "prd.json"),
+      JSON.stringify(emptyPrd, null, 2),
+    );
+  }
+
   console.log(chalk.cyan("\nLaunching in sandy sandbox...\n"));
 
   const sandyProcess = spawn("sandy", ["run", "./.ralph/ralph.sh"], {
@@ -1338,6 +1358,7 @@ function installRalphSkills() {
 function generateRalphScript(agent, maxIterations) {
   const agentConfig = AGENTS[agent];
   const promptFile = agent === "claude" ? "CLAUDE.md" : "prompt.md";
+  const iterationTimeout = 300; // 5 minutes per iteration
 
   return `#!/bin/bash
 # Ralph Wiggum - Autonomous AI Coding Agent Loop
@@ -1351,16 +1372,32 @@ PRD_FILE="$SCRIPT_DIR/prd.json"
 PROGRESS_FILE="$SCRIPT_DIR/progress.txt"
 PROMPT_FILE="$SCRIPT_DIR/${promptFile}"
 MAX_ITERATIONS=${maxIterations}
+ITERATION_TIMEOUT=${iterationTimeout}
 
 echo ""
-echo -e "\\033[1;33m╦═╗╔═╗╦  ╔═╗╦ ╦\\033[0m  \\033[1;31m╦ ╦╦╔═╗╔═╗╦ ╦╔╦╗\\033[0m"
-echo -e "\\033[1;33m╠╦╝╠═╣║  ╠═╝╠═╣\\033[0m  \\033[1;31m║║║║║ ╦║ ╦║ ║║║║\\033[0m"
-echo -e "\\033[1;33m╩╚═╩ ╩╩═╝╩  ╩ ╩\\033[0m  \\033[1;31m╚╩╝╩╚═╝╚═╝╚═╝╩ ╩\\033[0m"
+echo -e "\\\\033[1;33m╦═╗╔═╗╦  ╔═╗╦ ╦\\\\033[0m  \\\\033[1;31m╦ ╦╦╔═╗╔═╗╦ ╦╔╦╗\\\\033[0m"
+echo -e "\\\\033[1;33m╠╦╝╠═╣║  ╠═╝╠═╣\\\\033[0m  \\\\033[1;31m║║║║║ ╦║ ╦║ ║║║║\\\\033[0m"
+echo -e "\\\\033[1;33m╩╚═╩ ╩╩═╝╩  ╩ ╩\\\\033[0m  \\\\033[1;31m╚╩╝╩╚═╝╚═╝╚═╝╩ ╩\\\\033[0m"
 echo ""
 echo "Agent: ${agentConfig.name}"
 echo "Max iterations: $MAX_ITERATIONS"
+echo "Timeout per iteration: \${ITERATION_TIMEOUT}s"
 echo "Started: $(date)"
 echo ""
+
+# Validate required files exist
+if [ ! -f "$PROMPT_FILE" ]; then
+  echo "ERROR: Prompt file not found: $PROMPT_FILE"
+  exit 1
+fi
+if [ ! -f "$PRD_FILE" ]; then
+  echo "ERROR: PRD file not found: $PRD_FILE"
+  exit 1
+fi
+if [ ! -f "$PROGRESS_FILE" ]; then
+  echo "ERROR: Progress file not found: $PROGRESS_FILE"
+  exit 1
+fi
 
 for i in $(seq 1 $MAX_ITERATIONS); do
   echo ""
@@ -1371,18 +1408,26 @@ for i in $(seq 1 $MAX_ITERATIONS); do
 
   # Run the agent - stream output live, capture to file for checks
   OUTPUT_FILE=$(mktemp)
+  AGENT_EXIT=0
   ${
     agent === "claude"
-      ? `claude ${agentConfig.dangerousFlag} ${agentConfig.printFlag} < "$PROMPT_FILE" 2>&1 | tee "$OUTPUT_FILE" || true`
+      ? `timeout \${ITERATION_TIMEOUT} bash -c 'cat "$PROMPT_FILE" | claude ${agentConfig.dangerousFlag} -p 2>&1 | tee "$OUTPUT_FILE"' || AGENT_EXIT=$?`
       : agent === "codex"
-        ? `codex ${agentConfig.dangerousFlag} -q "$(cat $PROMPT_FILE)" 2>&1 | tee "$OUTPUT_FILE" || true`
-        : `gemini ${agentConfig.dangerousFlag} -p "$(cat $PROMPT_FILE)" 2>&1 | tee "$OUTPUT_FILE" || true`
+        ? `timeout \${ITERATION_TIMEOUT} bash -c 'codex ${agentConfig.dangerousFlag} -q "$(cat $PROMPT_FILE)" 2>&1 | tee "$OUTPUT_FILE"' || AGENT_EXIT=$?`
+        : `timeout \${ITERATION_TIMEOUT} bash -c 'gemini ${agentConfig.dangerousFlag} -p "$(cat $PROMPT_FILE)" 2>&1 | tee "$OUTPUT_FILE"' || AGENT_EXIT=$?`
   }
   OUTPUT=$(cat "$OUTPUT_FILE")
   rm -f "$OUTPUT_FILE"
 
+  # Check if timed out (exit code 124)
+  if [ $AGENT_EXIT -eq 124 ]; then
+    echo ""
+    echo "Iteration $i timed out after \${ITERATION_TIMEOUT}s. Moving to next..."
+    continue
+  fi
+
   # Check for auth errors - don't retry
-  if echo "$OUTPUT" | grep -qi "invalid api key\|please run /login\|not authenticated\|unauthorized"; then
+  if echo "$OUTPUT" | grep -qi "invalid api key\\|please run /login\\|not authenticated\\|unauthorized"; then
     echo ""
     echo "Authentication failed. Please authenticate your agent first:"
     echo "  claude /login"
