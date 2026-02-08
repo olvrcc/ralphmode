@@ -1406,7 +1406,7 @@ for i in $(seq 1 $MAX_ITERATIONS); do
   OUTPUT_FILE=$(mktemp)
   ${
     agent === "claude"
-      ? `cat "$PROMPT_FILE" | claude ${agentConfig.dangerousFlag} -p 2>&1 | tee "$OUTPUT_FILE" || true`
+      ? `claude ${agentConfig.dangerousFlag} ${agentConfig.printFlag} < "$PROMPT_FILE" 2>&1 | tee "$OUTPUT_FILE" || true`
       : agent === "codex"
         ? `codex ${agentConfig.dangerousFlag} -q "$(cat "$PROMPT_FILE")" 2>&1 | tee "$OUTPUT_FILE" || true`
         : `gemini ${agentConfig.dangerousFlag} -p "$(cat "$PROMPT_FILE")" 2>&1 | tee "$OUTPUT_FILE" || true`
