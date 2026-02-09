@@ -738,10 +738,37 @@ async function ensureSandyReady() {
       try {
         execSync("sandy up", { stdio: "pipe", timeout: 120000 });
         spinner.succeed("Sandy started");
-      } catch {
-        spinner.fail("Failed to start sandy");
-        console.log(chalk.yellow("\n  Try manually: sandy up\n"));
-        return false;
+      } catch (upErr) {
+        const upOutput =
+          (upErr.stderr?.toString() || "") + (upErr.stdout?.toString() || "");
+        if (/image|not found|setup/i.test(upOutput)) {
+          // Image not built yet - run setup first
+          spinner.text = "Setting up sandy...";
+          notifyMacOS("Ralph", "Setting up sandy (first time)...");
+          try {
+            execSync("sandy setup", { stdio: "pipe", timeout: 300000 });
+            spinner.succeed("Sandy set up");
+          } catch {
+            spinner.fail("Failed to set up sandy");
+            console.log(chalk.yellow("\n  Try manually: sandy setup\n"));
+            return false;
+          }
+          // Retry sandy up after setup
+          spinner.start("Starting sandy...");
+          notifyMacOS("Ralph", "Starting sandy sandbox...");
+          try {
+            execSync("sandy up", { stdio: "pipe", timeout: 120000 });
+            spinner.succeed("Sandy started");
+          } catch {
+            spinner.fail("Failed to start sandy");
+            console.log(chalk.yellow("\n  Try manually: sandy up\n"));
+            return false;
+          }
+        } else {
+          spinner.fail("Failed to start sandy");
+          console.log(chalk.yellow("\n  Try manually: sandy up\n"));
+          return false;
+        }
       }
     } else {
       spinner.succeed("Sandy running");
