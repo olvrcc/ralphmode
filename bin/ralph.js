@@ -434,32 +434,8 @@ async function initProject() {
   }
 
   // Step 6: Set up sandy (required for AFK Ralph)
-  spinner.start("Checking sandy...");
-  let sandyInstalled = false;
-  try {
-    execSync("sandy --version", { stdio: "pipe" });
-    sandyInstalled = true;
-    spinner.succeed("Sandy installed");
-  } catch {
-    spinner.fail("Sandy not installed");
-    console.log(chalk.yellow("\n  Sandy is required for AFK Ralph mode."));
-    console.log(chalk.gray("  Install: https://github.com/anthropics/sandy\n"));
-    return;
-  }
-
-  // Run sandy init if no sandy.json
-  const sandyJsonPath = join(process.cwd(), "sandy.json");
-  if (!existsSync(sandyJsonPath)) {
-    spinner.start("Running sandy init...");
-    try {
-      execSync("sandy init", { cwd: process.cwd(), stdio: "pipe" });
-      spinner.succeed("sandy init complete");
-    } catch {
-      spinner.warn("sandy.json already exists");
-    }
-  } else {
-    console.log(chalk.gray("  sandy.json already exists"));
-  }
+  const sandyReady = await ensureSandyReady();
+  if (!sandyReady) return;
 
   // Step 7: Create ralph directory and files
   spinner.start("Creating Ralph files...");
@@ -600,22 +576,12 @@ async function runRalph(args) {
     }
   }
 
-  // Check sandy
-  const spinner = ora("Checking sandy...").start();
-  try {
-    execSync("sandy --version", { stdio: "pipe" });
-    spinner.succeed("Sandy available");
-  } catch {
-    spinner.fail("Sandy not found");
-    console.log(
-      chalk.yellow(
-        "\nSandy is required. Install: https://github.com/anthropics/sandy",
-      ),
-    );
-    return;
-  }
+  // Check sandy state (auto-fix if possible)
+  const sandyReady = await ensureSandyReady();
+  if (!sandyReady) return;
 
   // Check agent auth before launching loop
+  const spinner = ora();
   spinner.start(`Checking ${AGENTS[config.agent].name} authentication...`);
   const isAuthed = await checkAgentAuth(config.agent);
   if (!isAuthed) {
@@ -729,6 +695,106 @@ function checkAgentInstalled(agent) {
   } catch {
     return false;
   }
+}
+
+function notifyMacOS(title, message) {
+  if (process.platform !== "darwin") return;
+  try {
+    const escaped = message.replace(/"/g, '\\"');
+    const titleEscaped = title.replace(/"/g, '\\"');
+    spawn(
+      "osascript",
+      ["-e", `display notification "${escaped}" with title "${titleEscaped}"`],
+      { stdio: "ignore", detached: true },
+    ).unref();
+  } catch {
+    // fire-and-forget
+  }
+}
+
+async function ensureSandyReady() {
+  const spinner = ora("Checking sandy...").start();
+
+  // 1. Check if sandy is installed
+  try {
+    execSync("which sandy", { stdio: "pipe" });
+  } catch {
+    spinner.fail("Sandy not installed");
+    console.log(
+      chalk.yellow(
+        "\n  Sandy is required. Install: https://github.com/anthropics/sandy\n",
+      ),
+    );
+    return false;
+  }
+
+  // 2. Check if sandy is set up (Docker image built)
+  try {
+    const statusOutput = execSync("sandy status", { stdio: "pipe" }).toString();
+    // 3. Check if sandy is running
+    if (/not running/i.test(statusOutput)) {
+      spinner.text = "Starting sandy...";
+      notifyMacOS("Ralph", "Starting sandy sandbox...");
+      try {
+        execSync("sandy up", { stdio: "pipe", timeout: 120000 });
+        spinner.succeed("Sandy started");
+      } catch {
+        spinner.fail("Failed to start sandy");
+        console.log(chalk.yellow("\n  Try manually: sandy up\n"));
+        return false;
+      }
+    } else {
+      spinner.succeed("Sandy running");
+    }
+  } catch (err) {
+    const stderr = err.stderr?.toString() || "";
+    const stdout = err.stdout?.toString() || "";
+    const output = stderr + stdout;
+
+    if (/docker|image|not found|not set up/i.test(output)) {
+      // Sandy not set up - run setup
+      spinner.text = "Setting up sandy...";
+      notifyMacOS("Ralph", "Setting up sandy (first time)...");
+      try {
+        execSync("sandy setup", { stdio: "pipe", timeout: 300000 });
+        spinner.succeed("Sandy set up");
+      } catch {
+        spinner.fail("Failed to set up sandy");
+        console.log(chalk.yellow("\n  Try manually: sandy setup\n"));
+        return false;
+      }
+
+      // After setup, start it
+      spinner.start("Starting sandy...");
+      notifyMacOS("Ralph", "Starting sandy sandbox...");
+      try {
+        execSync("sandy up", { stdio: "pipe", timeout: 120000 });
+        spinner.succeed("Sandy started");
+      } catch {
+        spinner.fail("Failed to start sandy");
+        console.log(chalk.yellow("\n  Try manually: sandy up\n"));
+        return false;
+      }
+    } else {
+      spinner.fail("Sandy status check failed");
+      console.log(chalk.yellow("\n  Try manually: sandy status\n"));
+      return false;
+    }
+  }
+
+  // 4. Ensure sandy.json exists
+  const sandyJsonPath = join(process.cwd(), "sandy.json");
+  if (!existsSync(sandyJsonPath)) {
+    spinner.start("Initializing sandy.json...");
+    try {
+      execSync("sandy init", { cwd: process.cwd(), stdio: "pipe" });
+      spinner.succeed("sandy.json created");
+    } catch {
+      spinner.warn("sandy init failed (sandy.json may already exist)");
+    }
+  }
+
+  return true;
 }
 
 async function checkAgentAuth(agent) {
