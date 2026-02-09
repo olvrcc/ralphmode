@@ -1,0 +1,10 @@
+{
+  "agent": "claude",
+  "maxIterations": 30,
+  "createdAt": "2026-02-05T10:23:30.424Z",
+  "ticketPrefix": "RLP",
+  "git": {
+    "provider": "none",
+    "createPRs": false
+  }
+}
