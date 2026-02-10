@@ -140,6 +140,8 @@ async function main() {
     await runRalph(args.slice(1));
   } else if (command === "status") {
     await showStatus();
+  } else if (command === "review") {
+    await runReview(args.slice(1));
   } else if (command === "compound") {
     await runCompoundReview();
   } else if (command === "schedule") {
@@ -196,6 +198,7 @@ ${chalk.bold("Commands:")}
   ${chalk.cyan("init")}              Initialize Ralph mode in current project
   ${chalk.cyan("run")} [iterations]  Start Ralph loop (default: 10 iterations)
   ${chalk.cyan("status")}            Show current PRD and progress status
+  ${chalk.cyan("review")}            Run review agent to verify completed work
   ${chalk.cyan("compound")}          Extract learnings from recent sessions
   ${chalk.cyan("schedule")}          Set up nightly automated runs (launchd)
   ${chalk.cyan("gh check")}          Check GitHub CLI authentication
@@ -599,8 +602,21 @@ async function runRalph(args) {
   }
   spinner.succeed(`${AGENTS[config.agent].name} authenticated`);
 
+  // Determine review agent (prefer Claude for review)
+  let reviewAgent = config.agent;
+  if (config.agent !== "claude") {
+    if (checkAgentInstalled("claude") && (await checkAgentAuth("claude"))) {
+      reviewAgent = "claude";
+    }
+  }
+  console.log(chalk.gray(`Review agent: ${AGENTS[reviewAgent].name}`));
+
   // Regenerate ralph.sh with current iterations and latest fixes
-  const ralphScript = generateRalphScript(config.agent, iterations);
+  const ralphScript = generateRalphScript(
+    config.agent,
+    iterations,
+    reviewAgent,
+  );
   writeFileSync(join(ralphDir, "ralph.sh"), ralphScript);
   chmodSync(join(ralphDir, "ralph.sh"), "755");
 
@@ -608,6 +624,13 @@ async function runRalph(args) {
   const promptFile = config.agent === "claude" ? "CLAUDE.md" : "prompt.md";
   const promptContent = generatePrompt(config.agent, config);
   writeFileSync(join(ralphDir, promptFile), promptContent);
+
+  // Write review prompt
+  const reviewPromptContent = generateReviewPrompt(config);
+  writeFileSync(join(ralphDir, "review-prompt.md"), reviewPromptContent);
+
+  // Initialize empty last-output.txt
+  writeFileSync(join(ralphDir, "last-output.txt"), "");
 
   // Create progress.txt if missing
   if (!existsSync(join(ralphDir, "progress.txt"))) {
@@ -686,6 +709,84 @@ async function showStatus() {
   } else {
     console.log(chalk.yellow("  prd.json not found."));
   }
+}
+
+async function runReview(args) {
+  const ralphDir = join(process.cwd(), ".ralph");
+
+  if (!existsSync(ralphDir)) {
+    console.log(chalk.red("Ralph not initialized. Run `ralph init` first."));
+    return;
+  }
+
+  // Load config
+  const configPath = join(ralphDir, "config.json");
+  const config = existsSync(configPath)
+    ? JSON.parse(readFileSync(configPath, "utf-8"))
+    : { agent: "claude", maxIterations: 30 };
+
+  // Determine review agent (prefer Claude)
+  let reviewAgent = config.agent;
+  if (config.agent !== "claude") {
+    if (checkAgentInstalled("claude") && (await checkAgentAuth("claude"))) {
+      reviewAgent = "claude";
+    }
+  }
+
+  const reviewAgentConfig = AGENTS[reviewAgent];
+  console.log(chalk.cyan(`\nRunning review with ${reviewAgentConfig.name}...`));
+
+  // Write review prompt
+  const reviewPromptContent = generateReviewPrompt(config);
+  writeFileSync(join(ralphDir, "review-prompt.md"), reviewPromptContent);
+
+  // Initialize last-output.txt if missing
+  if (!existsSync(join(ralphDir, "last-output.txt"))) {
+    writeFileSync(join(ralphDir, "last-output.txt"), "");
+  }
+
+  // Build review command
+  const reviewPromptPath = join(ralphDir, "review-prompt.md");
+  let reviewCmd;
+  let reviewArgs;
+  if (reviewAgent === "claude") {
+    reviewCmd = "claude";
+    reviewArgs = [
+      reviewAgentConfig.dangerousFlag,
+      "-p",
+      readFileSync(reviewPromptPath, "utf-8"),
+    ];
+  } else if (reviewAgent === "codex") {
+    reviewCmd = "codex";
+    reviewArgs = [
+      reviewAgentConfig.dangerousFlag,
+      "-q",
+      readFileSync(reviewPromptPath, "utf-8"),
+    ];
+  } else {
+    reviewCmd = "gemini";
+    reviewArgs = [
+      reviewAgentConfig.dangerousFlag,
+      "-p",
+      readFileSync(reviewPromptPath, "utf-8"),
+    ];
+  }
+
+  console.log("");
+
+  const reviewProcess = spawn(reviewCmd, reviewArgs, {
+    cwd: process.cwd(),
+    stdio: "inherit",
+  });
+
+  reviewProcess.on("close", (code) => {
+    if (code === 0) {
+      console.log(chalk.green("\nReview complete!"));
+    } else {
+      console.log(chalk.yellow(`\nReview exited with code ${code}`));
+    }
+    showStatus();
+  });
 }
 
 function checkAgentInstalled(agent) {
@@ -1448,7 +1549,7 @@ function installRalphSkills() {
   return installed;
 }
 
-function generateRalphScript(agent, maxIterations) {
+function generateRalphScript(agent, maxIterations, reviewAgent = agent) {
   const agentConfig = AGENTS[agent];
   const promptFile = agent === "claude" ? "CLAUDE.md" : "prompt.md";
 
@@ -1459,10 +1560,20 @@ function generateRalphScript(agent, maxIterations) {
         ? `codex ${agentConfig.dangerousFlag} -q "$(cat "$PROMPT_FILE")"`
         : `gemini ${agentConfig.dangerousFlag} -p "$(cat "$PROMPT_FILE")"`;
 
+  // Review agent command (may differ from coding agent)
+  const reviewAgentConfig = AGENTS[reviewAgent];
+  const reviewCommand =
+    reviewAgent === "claude"
+      ? `claude ${reviewAgentConfig.dangerousFlag} -p "$(cat "$REVIEW_PROMPT_FILE")"`
+      : reviewAgent === "codex"
+        ? `codex ${reviewAgentConfig.dangerousFlag} -q "$(cat "$REVIEW_PROMPT_FILE")"`
+        : `gemini ${reviewAgentConfig.dangerousFlag} -p "$(cat "$REVIEW_PROMPT_FILE")"`;
+
   return `#!/bin/bash
 # Ralph Wiggum - Autonomous AI Coding Agent Loop
 # Generated by ralph CLI
 # Agent: ${agentConfig.name}
+# Review Agent: ${reviewAgentConfig.name}
 
 set -e
 
@@ -1470,11 +1581,13 @@ SCRIPT_DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
 PRD_FILE="$SCRIPT_DIR/prd.json"
 PROGRESS_FILE="$SCRIPT_DIR/progress.txt"
 PROMPT_FILE="$SCRIPT_DIR/${promptFile}"
+REVIEW_PROMPT_FILE="$SCRIPT_DIR/review-prompt.md"
 MAX_ITERATIONS=${maxIterations}
 
 # Spinner with elapsed time + stale warning
 show_spinner() {
   local pid=$1
+  local label=\${2:-"Working"}
   local start_time=$(date +%s)
   local spin_chars='|/-\\\\'
   local i=0
@@ -1484,7 +1597,7 @@ show_spinner() {
     local elapsed=$((now - start_time))
     local min=$((elapsed / 60))
     local sec=$((elapsed % 60))
-    printf "\\\\r  %s ${agentConfig.name} is working... (%dm %02ds)  " "\${spin_chars:\$i:1}" "$min" "$sec"
+    printf "\\\\r  %s %s... (%dm %02ds)  " "\${spin_chars:\$i:1}" "$label" "$min" "$sec"
     i=$(( (i + 1) % \${#spin_chars} ))
     if [ $elapsed -gt 180 ] && [ $warned -eq 0 ]; then
       warned=1
@@ -1505,6 +1618,7 @@ echo -e "\\\\033[1;33m╠╦╝╠═╣║  ╠═╝╠═╣\\\\033[0m  \\\\0
 echo -e "\\\\033[1;33m╩╚═╩ ╩╩═╝╩  ╩ ╩\\\\033[0m  \\\\033[1;31m╚╩╝╩╚═╝╚═╝╚═╝╩ ╩\\\\033[0m"
 echo ""
 echo "Agent: ${agentConfig.name}"
+echo "Review: ${reviewAgentConfig.name}"
 echo "Max iterations: $MAX_ITERATIONS"
 echo "Started: $(date)"
 echo ""
@@ -1522,6 +1636,9 @@ if [ ! -f "$PROGRESS_FILE" ]; then
   echo "ERROR: Progress file not found: $PROGRESS_FILE"
   exit 1
 fi
+if [ ! -f "$REVIEW_PROMPT_FILE" ]; then
+  echo "WARNING: Review prompt not found: $REVIEW_PROMPT_FILE (skipping reviews)"
+fi
 
 for i in $(seq 1 $MAX_ITERATIONS); do
   echo ""
@@ -1532,12 +1649,12 @@ for i in $(seq 1 $MAX_ITERATIONS); do
 
   OUTPUT_FILE=$(mktemp)
 
-  # Run agent in background
+  # Run coding agent in background
   ${agentCommand} > "$OUTPUT_FILE" 2>&1 &
   AGENT_PID=$!
 
   # Show spinner while agent works
-  show_spinner $AGENT_PID
+  show_spinner $AGENT_PID "${agentConfig.name} is working"
 
   # Wait for agent and capture exit code
   wait $AGENT_PID || true
@@ -1565,6 +1682,9 @@ for i in $(seq 1 $MAX_ITERATIONS); do
     echo "  ⚠ No output from agent"
   fi
 
+  # Save last output for review agent
+  echo "$OUTPUT" > "$SCRIPT_DIR/last-output.txt"
+
   # Check for auth errors - don't retry
   if echo "$OUTPUT" | grep -qi "invalid api key\\\\|please run /login\\\\|not authenticated\\\\|unauthorized"; then
     echo ""
@@ -1575,14 +1695,53 @@ for i in $(seq 1 $MAX_ITERATIONS); do
     exit 1
   fi
 
-  # Check for completion signal
-  if echo "$OUTPUT" | grep -q "<promise>COMPLETE</promise>"; then
+  # ─── Review Agent Step ───────────────────────────────────
+  if [ -f "$REVIEW_PROMPT_FILE" ]; then
     echo ""
-    echo "════════════════════════════════════════════════════"
-    echo "  RALPH COMPLETED ALL TASKS!"
-    echo "  Finished at iteration $i of $MAX_ITERATIONS"
-    echo "════════════════════════════════════════════════════"
-    exit 0
+    echo "─── Review Agent ────────────────────────────────────"
+
+    REVIEW_OUTPUT_FILE=$(mktemp)
+
+    ${reviewCommand} > "$REVIEW_OUTPUT_FILE" 2>&1 &
+    REVIEW_PID=$!
+
+    show_spinner $REVIEW_PID "Review agent checking work"
+
+    wait $REVIEW_PID || true
+
+    REVIEW_OUTPUT=$(cat "$REVIEW_OUTPUT_FILE")
+    rm -f "$REVIEW_OUTPUT_FILE"
+
+    if [ -n "$REVIEW_OUTPUT" ]; then
+      REVIEW_LINES=$(echo "$REVIEW_OUTPUT" | wc -l | tr -d ' ')
+      if [ "$REVIEW_LINES" -gt 20 ]; then
+        echo "$REVIEW_OUTPUT" | head -8
+        echo "  ... ($((REVIEW_LINES - 16)) lines omitted) ..."
+        echo "$REVIEW_OUTPUT" | tail -8
+      else
+        echo "$REVIEW_OUTPUT"
+      fi
+    else
+      echo "  ⚠ No output from review agent"
+    fi
+    echo "────────────────────────────────────────────────────────"
+  fi
+
+  # Check for completion AFTER review
+  if echo "$OUTPUT" | grep -q "<promise>COMPLETE</promise>"; then
+    # Coding agent thinks we're done — verify via prd.json (review may have un-finished stories)
+    REMAINING=$(grep -c '"passes": false' "$PRD_FILE" 2>/dev/null || echo "0")
+    if [ "$REMAINING" -gt 0 ]; then
+      echo ""
+      echo "  Review agent found $REMAINING incomplete stories. Continuing..."
+    else
+      echo ""
+      echo "════════════════════════════════════════════════════"
+      echo "  RALPH COMPLETED ALL TASKS!"
+      echo "  Finished at iteration $i of $MAX_ITERATIONS"
+      echo "════════════════════════════════════════════════════"
+      exit 0
+    fi
   fi
 
   echo ""
@@ -1705,6 +1864,57 @@ If stories remain with \`passes: false\` and \`blocked: false\`: end normally (n
 - Keep CI green
 - Read Codebase Patterns before starting
 - Each iteration is fresh context - progress.txt is your memory
+`;
+}
+
+function generateReviewPrompt(config) {
+  const ticketPrefix = config.ticketPrefix || "US";
+  return `## Your Task
+
+You are a **Review Agent** for Ralph. Your ONLY job is to verify completed work and update prd.json.
+
+**CRITICAL RULES:**
+- Do NOT modify source code
+- Do NOT implement features
+- Do NOT create branches or PRs
+- ONLY edit .ralph/prd.json (and .ralph/prds/<activePrd>.json if activePrd is set in config)
+
+## Steps
+
+1. **Read context files:**
+   - \`.ralph/prd.json\` — the current PRD with user stories
+   - \`.ralph/config.json\` — project configuration
+   - \`.ralph/last-output.txt\` — output from the coding agent's last run
+   - \`.ralph/progress.txt\` — cumulative progress log
+
+2. **Check recent changes:**
+   - Run \`git diff HEAD~1\` to see what changed
+   - Run \`git log --oneline -5\` to see recent commits
+
+3. **For each story where \`passes: true\`:**
+   - Read the acceptance criteria
+   - Verify each criterion is actually met by reading the relevant code and/or running tests
+   - If a criterion is NOT met:
+     - Set \`passes: false\` in prd.json
+     - Add a note explaining what's missing (e.g. \`"notes": "AC #2 not met: no error handling for invalid input"\`)
+   - If all criteria ARE met, leave \`passes: true\`
+
+4. **Discover gaps:**
+   - Look for bugs, edge cases, missing error handling, or broken integration
+   - If you find a gap that isn't covered by any existing story, **add a new story** to prd.json
+   - New story IDs auto-increment from highest existing (e.g. if \`${ticketPrefix}-005\` exists, next is \`${ticketPrefix}-006\`)
+   - New stories must have: id, ticketId, title, description, acceptanceCriteria, priority, passes: false, notes, dependsOn, branch: null, pullRequest: null, blocked: false
+   - Only add stories for real, concrete issues — not hypothetical improvements
+
+5. **Sync PRD files:**
+   - Update \`.ralph/prd.json\`
+   - If \`config.activePrd\` is set, also update \`.ralph/prds/<activePrd>.json\`
+
+6. **Output summary:**
+   - List stories verified (pass/fail)
+   - List any new stories added
+   - If all non-blocked stories pass: output "REVIEW PASSED"
+   - If any stories were un-finished or added: output "REVIEW FOUND ISSUES"
 `;
 }
 
